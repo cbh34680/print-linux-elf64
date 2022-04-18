@@ -1,11 +1,16 @@
-//
-// gcc -ggdb -O0 -o exe src.c && ./exe
-// clear; gcc -E src.c > src.pc; gcc -ggdb -O0 -c src.c && gcc -o exe src.o && ./exe
-// clear; gcc -E src.c > src.pc; gcc -Wformat -Wformat-signedness -ggdb -O0 -c src.c && gcc -o exe src.o && ./exe
-//
+/*
+ * user@asm:~/print-linux-elf64(1:477)$ uname -a
+ * Linux asm 5.10.0-13-amd64 #1 SMP Debian 5.10.106-1 (2022-03-17) x86_64 GNU/Linux
+ *
+
+gcc -ggdb -O0 -o exe src.c && ./exe
+clear; gcc -E src.c > src.pc; gcc -ggdb -O0 -c src.c && gcc -o exe src.o && ./exe
+clear; gcc -E src.c > src.pc; gcc -Wformat -Wformat-signedness -ggdb -O0 -c src.c && gcc -o exe src.o && ./exe
+
+ */
 #define _GNU_SOURCE
 
-#define TFILE
+//#define TFILE
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,15 +23,16 @@
 #include <sys/stat.h>
 
 #ifdef TFILE
-#include <sys/mman.h>
+	#include <sys/mman.h>
 #else
+	#define TMEM
 #endif
 
 #include <link.h>
 #include <elf.h>
 #include <sys/auxv.h>
 
-#ifndef TFILE
+#ifdef TMEM
 static int phdr_callback(struct dl_phdr_info *info, size_t size, void *data);
 #endif
 
@@ -50,8 +56,14 @@ __attribute__ ((destructor)) static void destruct2()
 	puts("destruct2");
 }
 
-static void print_elf_phdr_members(const char const* tabs, const ElfW(Phdr)* elf_phdr);
+static void print_elf_phdr_members(const char const* indent, const ElfW(Phdr)* elf_phdr);
 static void print_elf_shdrs(const ElfW(Shdr)* shdr, const ElfW(Half) shnum, const char const* filebin);
+
+#ifdef TFILE
+static void print_dyns_sht(const char const* indent, const ElfW(Dyn) const* dyns, const char const* base_addr);
+#else
+static void print_dyns_pt(const char const* indent, const ElfW(Dyn) const* dyns, const char const* base_addr);
+#endif
 
 const ElfW(Ehdr)* elf_ehdr = NULL;
 
@@ -166,64 +178,67 @@ int main(int argc, char** argv)
 }
 
 #ifdef TFILE
-static void print_syms(const char const* tabs, const ElfW(Sym) const* syms, const int nsyms, const char const* strtab)
+static void print_syms(const char const* indent, const ElfW(Sym) const* syms, const int nsyms, const char const* strtab)
 {
 	for (int i=0; i<nsyms; i++)
 	{
 		const ElfW(Sym) const* sym = &syms[i];
 
-		printf("%sElf_Sym[%d]\n", tabs, i);
-		printf("%s\tst_name\t%u '%s'\n", tabs, sym->st_name, &strtab[sym->st_name]);
-		printf("%s\tst_value\t%p\n", tabs, (void*)sym->st_value);
-		printf("%s\tst_size\t%lu\n", tabs, sym->st_size);
+		printf("%sElf_Sym[%d]\n", indent, i);
+		printf("%s\tst_name\t%u '%s'\n", indent, sym->st_name, &strtab[sym->st_name]);
+		printf("%s\tst_value\t%p\n", indent, (void*)sym->st_value);
+		printf("%s\tst_size\t%lu\n", indent, sym->st_size);
 
 		const unsigned char st_info_bind = ELF64_ST_BIND(sym->st_info);
 		switch (st_info_bind)
 		{
 			case STB_LOCAL:
-				printf("%s\tst_info(bind)\tSTB_LOCAL\n", tabs);
+				printf("%s\tst_info(bind)\tSTB_LOCAL\n", indent);
 				break;
 			case STB_GLOBAL:
-				printf("%s\tst_info(bind)\tSTB_GLOBAL\n", tabs);
+				printf("%s\tst_info(bind)\tSTB_GLOBAL\n", indent);
 				break;
 			case STB_WEAK:
-				printf("%s\tst_info(bind)\tSTB_WEAK\n", tabs);
+				printf("%s\tst_info(bind)\tSTB_WEAK\n", indent);
 				break;
 			default:
-				printf("%s\tst_info(bind)\t%u\n", tabs, st_info_bind);
+				printf("%s\tst_info(bind)\t%u\n", indent, st_info_bind);
 				break;
 		}
 		const unsigned char st_info_type = ELF64_ST_TYPE(sym->st_info);
 		switch (st_info_type)
 		{
 			case STT_NOTYPE:
-				printf("%s\tst_info(type)\tSTT_NOTYPE\n", tabs);
+				printf("%s\tst_info(type)\tSTT_NOTYPE\n", indent);
 				break;
 			case STT_OBJECT:
-				printf("%s\tst_info(type)\tSTT_OBJECT\n", tabs);
+				printf("%s\tst_info(type)\tSTT_OBJECT\n", indent);
 				break;
 			case STT_FUNC:
-				printf("%s\tst_info(type)\tSTT_FUNC\n", tabs);
+				printf("%s\tst_info(type)\tSTT_FUNC\n", indent);
 				break;
 			case STT_SECTION:
-				printf("%s\tst_info(type)\tSTT_SECTION\n", tabs);
+				printf("%s\tst_info(type)\tSTT_SECTION\n", indent);
 				break;
 			case STT_FILE:
-				printf("%s\tst_info(type)\tSTT_FILE\n", tabs);
+				printf("%s\tst_info(type)\tSTT_FILE\n", indent);
 				break;
 			default:
-				printf("%s\tst_info(type)\t%u\n", tabs, st_info_type);
+				printf("%s\tst_info(type)\t%u\n", indent, st_info_type);
 				break;
 		}
 
-		printf("%s\tst_other\t%lu\n", tabs, ELF64_ST_VISIBILITY(sym->st_other));
-		printf("%s\tst_shndx\t%u\n", tabs, sym->st_shndx);
+		printf("%s\tst_other\t%lu\n", indent, ELF64_ST_VISIBILITY(sym->st_other));
+		printf("%s\tst_shndx\t%u\n", indent, sym->st_shndx);
 	}
 }
 
 static void print_elf_shdrs(const ElfW(Shdr)* elf_shdrs, const ElfW(Half) shnum, const char const* filebin)
 {
 	const char const* shstrtab = &filebin[elf_shdrs[elf_ehdr->e_shstrndx].sh_offset];
+
+	const ElfW(Sym)* dynsym = NULL;
+	const char* dynstrtab = NULL;
 
 	for (int i=0; i<shnum; i++)
 	{
@@ -238,7 +253,7 @@ static void print_elf_shdrs(const ElfW(Shdr)* elf_shdrs, const ElfW(Half) shnum,
 		}
 		puts("");
 
-		printf("\t\tsh_type\t%u\n", elf_shdr->sh_type);
+		printf("\t\tsh_type\t%u (0x%x)\n", elf_shdr->sh_type, elf_shdr->sh_type);
 		printf("\t\tsh_flags\t0x%lx\n", elf_shdr->sh_flags);
 		if (elf_shdr->sh_flags & SHF_INFO_LINK)
 		{
@@ -252,24 +267,65 @@ static void print_elf_shdrs(const ElfW(Shdr)* elf_shdrs, const ElfW(Half) shnum,
 		printf("\t\tsh_addralign\t%lu\n", elf_shdr->sh_addralign);
 		printf("\t\tsh_entsize\t%lu\n", elf_shdr->sh_entsize);
 
+		const void const* filepos = &filebin[elf_shdr->sh_offset];
+
 		switch (elf_shdr->sh_type)
 		{
 			case SHT_DYNAMIC:
 			{
 				printf("\t\t* sh_type\tSHT_DYNAMIC\n");
+				print_dyns_sht("\t\t\t", (ElfW(Dyn)*)filepos, filebin);
 				break;
 			}
 
 			case SHT_SYMTAB:
-			{
-				printf("\t\t* sh_type\tSHT_SYMTAB\n");
-				print_syms("\t\t\t", (const ElfW(Sym)*)&filebin[elf_shdr->sh_offset], elf_shdr->sh_size / elf_shdr->sh_entsize, &filebin[elf_shdrs[elf_shdr->sh_link].sh_offset]);
-				break;
-			}
 			case SHT_DYNSYM:
 			{
-				printf("\t\t* sh_type\tSHT_DYNSYM\n");
-				print_syms("\t\t\t", (const ElfW(Sym)*)&filebin[elf_shdr->sh_offset], elf_shdr->sh_size / elf_shdr->sh_entsize, &filebin[elf_shdrs[elf_shdr->sh_link].sh_offset]);
+				const ElfW(Sym) const* syms = (ElfW(Sym)*)filepos;
+				const int nsyms = elf_shdr->sh_size / elf_shdr->sh_entsize;
+				const char const* strtab = &filebin[elf_shdrs[elf_shdr->sh_link].sh_offset];
+
+				if (elf_shdr->sh_type == SHT_DYNSYM)
+				{
+					dynsym = syms;
+					dynstrtab = strtab;
+
+					puts("\t\t* sh_type\tSHT_DYNSYM");
+				}
+				else
+				{
+					puts("\t\t* sh_type\tSHT_SYMTAB");
+				}
+
+				print_syms("\t\t\t", syms, nsyms, strtab);
+				break;
+			}
+
+			case SHT_RELA:
+			{
+				printf("\t\t* sh_type\tSHT_RELA\n");
+
+				const ElfW(Rela) const* relas = (ElfW(Rela)*)filepos;
+				const int nrelas = elf_shdr->sh_size / elf_shdr->sh_entsize;
+
+				for (int i=0; i<nrelas; i++)
+				{
+					const ElfW(Rela) const* rela = (ElfW(Rela)*)&relas[i];
+
+					const int r_info_sym = ELF64_R_SYM(rela->r_info);
+
+					printf("\t\t\tr_offset\t%p\n", rela->r_offset);
+					printf("\t\t\tr_info(sym)\t%d\n", r_info_sym);
+
+					if (dynsym && dynstrtab)
+					{
+						printf("\t\t\t\t'%s'\n", &dynstrtab[dynsym[r_info_sym].st_name]);
+					}
+
+					printf("\t\t\tr_info(type)\t%llu\n", ELF64_R_TYPE(rela->r_info));
+					printf("\t\t\tr_addend\t%lld\n", rela->r_addend);
+				}
+
 				break;
 			}
 
@@ -283,123 +339,127 @@ static void print_elf_shdrs(const ElfW(Shdr)* elf_shdrs, const ElfW(Half) shnum,
 
 #endif
 
-static void pt_dynamic(const char const* tabs, const ElfW(Dyn)* elf_dyn, const ElfW(Addr) dlpi_addr)
+static void print_strtab(const char const* indent, const char* pos)
+{
+	const char const* start = pos;
+
+	pos++;
+
+	for (int i=0; *pos; i++)
+	{
+		printf("%s\t%d: (%lu) '%s'\n", indent, i, pos - start, pos);
+		pos = pos + strlen(pos) + 1;
+
+		if (i>20) {
+			printf("%s\t...\n", indent);
+			break;
+		}
+	}
+}
+
+#ifdef TFILE
+static void print_dyns_sht(const char const* indent, const ElfW(Dyn) const* dyns, const char const* base_addr)
 {
 	const char* strtab = NULL;
-	int needed = -1;
-	ElfW(Addr) init_array = 0;
-	ElfW(Addr) fini_array = 0;
-	int init_arraysz = -1;
-	int fini_arraysz = -1;
+
+	for (int i=0; dyns[i].d_un.d_val != DT_NULL; i++)
+	{
+		const ElfW(Dyn) const* dyn = &dyns[i];
+
+		if (dyn->d_tag == DT_STRTAB)
+		{
+			strtab = (char*)base_addr + dyn->d_un.d_val;
+			break;
+		}
+	}
+
+	assert(strtab);
+
 	const ElfW(Sym)* symtabs = NULL;
 
-	while (elf_dyn->d_un.d_val != DT_NULL)
+	for (int i=0; dyns[i].d_un.d_val != DT_NULL; i++)
 	{
-		switch (elf_dyn->d_tag)
+		const ElfW(Dyn) const* dyn = &dyns[i];
+
+		switch (dyn->d_tag)
 		{
 			case DT_NEEDED:
 			{
-				needed = elf_dyn->d_un.d_val;
-
-				printf("%sd_tag=DT_NEEDED\n", tabs);
-				printf("%s\t%lu\n", tabs, elf_dyn->d_un.d_val);
+				printf("%sd_tag=DT_NEEDED\n", indent);
 
 				break;
 			}
 
 			case DT_STRTAB:
 			{
-				strtab = (const char*)elf_dyn->d_un.d_ptr;
+				printf("%sd_tag=DT_STRTAB\n", indent);
+				printf("%s\t%d\n", indent, dyn->d_un.d_val);
 
-				printf("%sd_tag=DT_STRTAB\n", tabs);
+				print_strtab(indent, base_addr + dyn->d_un.d_val);
 
-				const char* pos = (const char*)elf_dyn->d_un.d_ptr;
-				pos++;
+				break;
+			}
 
-				for (int i=0; *pos; i++)
-				{
-					printf("%s\t%d: '%s'\n", tabs, i, pos);
-					pos = pos + strlen(pos) + 1;
-
-					if (i>20) {
-						printf("%s\t...\n", tabs);
-						break;
-					}
-				}
+			case DT_STRSZ:
+			{
+				printf("%sd_tag=DT_STRSZ\n", indent);
+				printf("%s\t%d\n", indent, dyn->d_un.d_val);
 
 				break;
 			}
 
 			case DT_INIT:
 			{
-				printf("%sd_tag=DT_INIT\n", tabs);
-				printf("%s\t%p(%p)\n", tabs, (void*)elf_dyn->d_un.d_ptr, (void*)dlpi_addr + elf_dyn->d_un.d_ptr);
+				printf("%sd_tag=DT_INIT\n", indent);
 
 				break;
 			}
 
 			case DT_FINI:
 			{
-				printf("%sd_tag=DT_FINI\n", tabs);
-				printf("%s\t%p(%p)\n", tabs, (void*)elf_dyn->d_un.d_ptr, (void*)dlpi_addr + elf_dyn->d_un.d_ptr);
+				printf("%sd_tag=DT_FINI\n", indent);
 
 				break;
 			}
 
 			case DT_INIT_ARRAY:
 			{
-				init_array = elf_dyn->d_un.d_ptr;
-
-				printf("%sd_tag=DT_INIT_ARRAY\n", tabs);
-				printf("%s\t%p(%p)\n", tabs, (void*)elf_dyn->d_un.d_ptr, (void*)dlpi_addr + elf_dyn->d_un.d_ptr);
+				printf("%sd_tag=DT_INIT_ARRAY\n", indent);
 
 				break;
 			}
 
 			case DT_FINI_ARRAY:
 			{
-				fini_array = elf_dyn->d_un.d_ptr;
-
-				printf("%sd_tag=DT_FINI_ARRAY\n", tabs);
-				printf("%s\t%p(%p)\n", tabs, elf_dyn->d_un.d_ptr, dlpi_addr + elf_dyn->d_un.d_ptr);
+				printf("%sd_tag=DT_FINI_ARRAY\n", indent);
 
 				break;
 			}
 
 			case DT_INIT_ARRAYSZ:
 			{
-				init_arraysz = elf_dyn->d_un.d_val;
-
-				printf("%sd_tag=DT_INIT_ARRAYSZ\n", tabs);
-				printf("%s\t%d\n", tabs, elf_dyn->d_un.d_val);
+				printf("%sd_tag=DT_INIT_ARRAYSZ\n", indent);
 
 				break;
 			}
 
 			case DT_FINI_ARRAYSZ:
 			{
-				fini_arraysz = elf_dyn->d_un.d_val;
-
-				printf("%sd_tag=DT_FINI_ARRAYSZ\n", tabs);
-				printf("%s\t%d\n", tabs, elf_dyn->d_un.d_val);
+				printf("%sd_tag=DT_FINI_ARRAYSZ\n", indent);
 
 				break;
 			}
 
 			case DT_SYMTAB:
 			{
-				symtabs = (const ElfW(Sym)*)elf_dyn->d_un.d_ptr;
-
-				printf("%sd_tag=DT_SYMTAB\n", tabs);
-				printf("%s\t%p\n", tabs, elf_dyn->d_un.d_ptr);
+				printf("%sd_tag=DT_SYMTAB\n", indent);
 
 				break;
 			}
 
 			case DT_SYMENT:
 			{
-				printf("%sd_tag=DT_SYMENT\n", tabs);
-				printf("%s\t%d:%d\n", tabs, elf_dyn->d_un.d_val, sizeof(Elf64_Sym));
+				printf("%sd_tag=DT_SYMENT\n", indent);
 
 				break;
 			}
@@ -411,8 +471,7 @@ static void pt_dynamic(const char const* tabs, const ElfW(Dyn)* elf_dyn, const E
 				// https://flapenguin.me/elf-dt-gnu-hash
 				// https://git.yoctoproject.org/prelink-cross/plain/trunk/src/ld-lookup.c?h=cross_prelink_r174
 
-				printf("%sd_tag=DT_GNU_HASH\n", tabs);
-				printf("%s\t%p\n", tabs, elf_dyn->d_un.d_ptr);
+				printf("%sd_tag=DT_GNU_HASH\n", indent);
 
 				break;
 			}
@@ -421,57 +480,200 @@ static void pt_dynamic(const char const* tabs, const ElfW(Dyn)* elf_dyn, const E
 			{
 				// https://github.com/robgjansen/elf-loader/blob/master/vdl-lookup.c#L118
 
-				printf("%sd_tag=DT_HASH\n", tabs);
-				printf("%s\t%p\n", tabs, elf_dyn->d_un.d_ptr);
+				printf("%sd_tag=DT_HASH\n", indent);
 
 				break;
 			}
 
 			default:
 			{
-				printf("%sd_tag=%d (0x%x)\n", tabs, elf_dyn->d_tag, elf_dyn->d_tag);
+				printf("%sd_tag=%d (0x%x)\n", indent, dyn->d_tag, dyn->d_tag);
 				break;
 			}
 		}
-
-		elf_dyn++;
-	}
-
-	if (strtab && (needed > 0))
-	{
-		printf("%s----->>>needed(%s)\n", tabs, &strtab[needed]);
-	}
-
-	if (init_array && (init_arraysz > 0))
-	{
-		const ElfW(Addr)* arr = (const ElfW(Addr)*)(dlpi_addr + init_array);
-
-		printf("%s----->>>init_array\n", tabs);
-
-		for (int i=0; i<(init_arraysz/sizeof(ElfW(Addr))); i++)
-		{
-			printf("%s\t[%d]=%p\n", tabs, i, arr[i]);
-		}
-	}
-
-	if (fini_array && (fini_arraysz > 0))
-	{
-		const ElfW(Addr)* arr = (const ElfW(Addr)*)(dlpi_addr + fini_array);
-
-		printf("%s----->>>fini_array\n", tabs);
-
-		for (int i=0; i<(fini_arraysz/sizeof(ElfW(Addr))); i++)
-		{
-			printf("%s\t[%d]=%p\n", tabs, i, arr[i]);
-		}
-	}
-
-	if (symtabs)
-	{
 	}
 }
 
-#ifndef TFILE
+#else
+static void print_dyns_pt(const char const* indent, const ElfW(Dyn) const* dyns, const char const* base_addr)
+{
+	const char* strtab = NULL;
+
+	for (int i=0; dyns[i].d_un.d_val != DT_NULL; i++)
+	{
+		const ElfW(Dyn) const* dyn = &dyns[i];
+
+		if (dyn->d_tag == DT_STRTAB)
+		{
+			strtab = (char*)dyn->d_un.d_ptr;
+			break;
+		}
+	}
+
+	assert(strtab);
+
+	ElfW(Addr) init_array = 0;
+	ElfW(Addr) fini_array = 0;
+	const ElfW(Sym)* symtabs = NULL;
+
+	for (int idx=0; dyns[idx].d_un.d_val != DT_NULL; idx++)
+	{
+		const ElfW(Dyn) const* dyn = &dyns[idx];
+
+		switch (dyn->d_tag)
+		{
+			case DT_NEEDED:
+			{
+				printf("%sd_tag=DT_NEEDED\n", indent);
+				printf("%s\t%lu '%s'\n", indent, dyn->d_un.d_val, &strtab[dyn->d_un.d_val]);
+
+				break;
+			}
+
+			case DT_STRTAB:
+			{
+				printf("%sd_tag=DT_STRTAB\n", indent);
+				printf("%s\t%p\n", indent, dyn->d_un.d_ptr);
+
+				strtab = (char*)dyn->d_un.d_ptr;
+
+				print_strtab(indent, (char*)strtab);
+
+				break;
+			}
+
+			case DT_STRSZ:
+			{
+				printf("%sd_tag=DT_STRSZ\n", indent);
+				printf("%s\t%d\n", indent, dyn->d_un.d_val);
+
+				break;
+			}
+
+			case DT_INIT:
+			{
+				printf("%sd_tag=DT_INIT\n", indent);
+				printf("%s\t%p(%p)\n", indent, (void*)dyn->d_un.d_ptr, (void*)(base_addr + dyn->d_un.d_ptr));
+
+				break;
+			}
+
+			case DT_FINI:
+			{
+				printf("%sd_tag=DT_FINI\n", indent);
+				printf("%s\t%p(%p)\n", indent, (void*)dyn->d_un.d_ptr, (void*)(base_addr + dyn->d_un.d_ptr));
+
+				break;
+			}
+
+			case DT_INIT_ARRAY:
+			{
+				init_array = dyn->d_un.d_ptr;
+
+				printf("%sd_tag=DT_INIT_ARRAY\n", indent);
+				printf("%s\t%p(%p)\n", indent, (void*)dyn->d_un.d_ptr, (void*)(base_addr + dyn->d_un.d_ptr));
+
+				break;
+			}
+
+			case DT_FINI_ARRAY:
+			{
+				fini_array = dyn->d_un.d_ptr;
+
+				printf("%sd_tag=DT_FINI_ARRAY\n", indent);
+				printf("%s\t%p(%p)\n", indent, dyn->d_un.d_ptr, (void*)(base_addr + dyn->d_un.d_ptr));
+
+				break;
+			}
+
+			case DT_INIT_ARRAYSZ:
+			{
+				printf("%sd_tag=DT_INIT_ARRAYSZ\n", indent);
+				printf("%s\t%d\n", indent, dyn->d_un.d_val);
+
+				if (init_array)
+				{
+					const ElfW(Addr) const* arr = (ElfW(Addr)*)(base_addr + init_array);
+
+					for (int i=0; i<(dyn->d_un.d_val/sizeof(ElfW(Addr))); i++)
+					{
+						printf("%s\t[%d]=%p\n", indent, i, arr[i]);
+					}
+				}
+
+				break;
+			}
+
+			case DT_FINI_ARRAYSZ:
+			{
+				printf("%sd_tag=DT_FINI_ARRAYSZ\n", indent);
+				printf("%s\t%d\n", indent, dyn->d_un.d_val);
+
+				if (fini_array)
+				{
+					const ElfW(Addr) const* arr = (ElfW(Addr)*)(base_addr + fini_array);
+
+					for (int i=0; i<(dyn->d_un.d_val/sizeof(ElfW(Addr))); i++)
+					{
+						printf("%s\t[%d]=%p\n", indent, i, arr[i]);
+					}
+				}
+
+				break;
+			}
+
+			case DT_SYMTAB:
+			{
+				symtabs = (const ElfW(Sym)*)dyn->d_un.d_ptr;
+
+				printf("%sd_tag=DT_SYMTAB\n", indent);
+				printf("%s\t%p\n", indent, dyn->d_un.d_ptr);
+
+				break;
+			}
+
+			case DT_SYMENT:
+			{
+				printf("%sd_tag=DT_SYMENT\n", indent);
+				printf("%s\t%d:%d\n", indent, dyn->d_un.d_val, sizeof(Elf64_Sym));
+
+				break;
+			}
+
+			case DT_GNU_HASH:
+			{
+				// https://github.com/robgjansen/elf-loader/blob/master/vdl-lookup.c#L83
+				// https://blogs.oracle.com/solaris/post/gnu-hash-elf-sections
+				// https://flapenguin.me/elf-dt-gnu-hash
+				// https://git.yoctoproject.org/prelink-cross/plain/trunk/src/ld-lookup.c?h=cross_prelink_r174
+
+				printf("%sd_tag=DT_GNU_HASH\n", indent);
+				printf("%s\t%p\n", indent, dyn->d_un.d_ptr);
+
+				break;
+			}
+
+			case DT_HASH:
+			{
+				// https://github.com/robgjansen/elf-loader/blob/master/vdl-lookup.c#L118
+
+				printf("%sd_tag=DT_HASH\n", indent);
+				printf("%s\t%p\n", indent, dyn->d_un.d_ptr);
+
+				break;
+			}
+
+			default:
+			{
+				printf("%sd_tag=%d (0x%x)\n", indent, dyn->d_tag, dyn->d_tag);
+				break;
+			}
+		}
+	}
+}
+#endif
+
+#ifdef TMEM
 static int phdr_callback(struct dl_phdr_info *info, size_t size, void *data)
 {
 	if (info->dlpi_name[0] != '\0')
@@ -499,7 +701,7 @@ static int phdr_callback(struct dl_phdr_info *info, size_t size, void *data)
 			case PT_DYNAMIC:
 			{
 				puts("\t\t* p_type=PT_DYNAMIC");
-				pt_dynamic("\t\t\t", (const ElfW(Dyn)*)p_vaddr, info->dlpi_addr);
+				print_dyns_pt("\t\t\t", (ElfW(Dyn)*)p_vaddr, (char*)info->dlpi_addr);
 				break;
 			}
 
@@ -523,15 +725,15 @@ static int phdr_callback(struct dl_phdr_info *info, size_t size, void *data)
 }
 #endif
 
-static void print_elf_phdr_members(const char const* tabs, const ElfW(Phdr)* elf_phdr)
+static void print_elf_phdr_members(const char const* indent, const ElfW(Phdr)* elf_phdr)
 {
-	printf("%sp_type\t0x%x\n", tabs, elf_phdr->p_type);
-	printf("%sp_offset\t%u (0x%x)\n", tabs, elf_phdr->p_offset, elf_phdr->p_offset);
-	printf("%sp_vaddr\t%u (%p)\n", tabs, elf_phdr->p_vaddr, elf_phdr->p_vaddr);
-	printf("%sp_paddr\t%u (%p)\n", tabs, elf_phdr->p_paddr, elf_phdr->p_paddr);
-	printf("%sp_filesz\t%u\n", tabs, elf_phdr->p_filesz);
-	printf("%sp_memsz\t%u\n", tabs, elf_phdr->p_memsz);
-	printf("%sp_flags\t0x%x\n", tabs, elf_phdr->p_flags);
-	printf("%sp_align\t%u\n", tabs, elf_phdr->p_align);
+	printf("%sp_type\t0x%x\n", indent, elf_phdr->p_type);
+	printf("%sp_offset\t%u (0x%x)\n", indent, elf_phdr->p_offset, elf_phdr->p_offset);
+	printf("%sp_vaddr\t%u (%p)\n", indent, elf_phdr->p_vaddr, elf_phdr->p_vaddr);
+	printf("%sp_paddr\t%u (%p)\n", indent, elf_phdr->p_paddr, elf_phdr->p_paddr);
+	printf("%sp_filesz\t%u\n", indent, elf_phdr->p_filesz);
+	printf("%sp_memsz\t%u\n", indent, elf_phdr->p_memsz);
+	printf("%sp_flags\t0x%x\n", indent, elf_phdr->p_flags);
+	printf("%sp_align\t%u\n", indent, elf_phdr->p_align);
 }
 
