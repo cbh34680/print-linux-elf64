@@ -35,6 +35,8 @@ clear; gcc -E src.c > src.pc; gcc -Wformat -Wformat-signedness -ggdb -O0 -c src.
 #include <elf.h>
 #include <sys/auxv.h>
 
+typedef unsigned char byte_t;
+
 #ifdef TMEM
 static int phdr_callback(struct dl_phdr_info *info, size_t size, void *data);
 #endif
@@ -59,15 +61,17 @@ __attribute__ ((destructor)) static void destruct2()
 	puts("destruct2");
 }
 
-static void print_elf_phdr_members(const char* indent, const ElfW(Phdr)* elf_phdr);
+static void print_phdrs(const ElfW(Phdr)* phdrs, const int nphdrs, const byte_t* baseadr);
+static void print_phdr_members(const char* indent, const ElfW(Phdr)* elf_phdr);
+static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* baseadr);
 
 #ifdef TFILE
-static void print_shdrs(const ElfW(Shdr)* shdr, const ElfW(Half) shnum, const unsigned char* filebin);
+static void print_shdrs(const ElfW(Shdr)* shdr, const ElfW(Half) shnum, const byte_t* filebin);
 #endif
 
-static void print_phdrs(const ElfW(Phdr)* phdrs, const int nphdrs, const unsigned char* baseadr);
-static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const unsigned char* baseadr);
-static void print_memory(const char* indent, const unsigned char* bytes, const int nbytes);
+static void print_memory(const char* indent, const byte_t* bytes, const int nbytes);
+static const char* phdr_type2str(const ElfW(Word) type);
+static const char* shdr_type2str(const ElfW(Word) type);
 
 const ElfW(Ehdr)* elf_ehdr = NULL;
 
@@ -85,7 +89,7 @@ int main(int argc, char** argv)
 	const int fd = open(argv[0], O_RDONLY);
 	struct stat st;
 	fstat(fd, &st);
-	unsigned char* filebin = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+	byte_t* filebin = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
 
 #else
 	puts("\n*** target is MEMORY ***\n");
@@ -147,7 +151,7 @@ int main(int argc, char** argv)
 	for (int i=0; i<elf_ehdr->e_phnum; i++)
 	{
 		printf("\tElf_Phdr[%d]\n", i);
-		print_elf_phdr_members("\t\t", &elf_phdrs[i]);
+		print_phdr_members("\t\t", &elf_phdrs[i]);
 	}
 #else
 	print_phdrs(elf_phdrs, elf_ehdr->e_phnum, filebin);
@@ -235,47 +239,48 @@ static void print_syms(const char* indent, const ElfW(Sym)* syms, const int nsym
 	}
 }
 
-static void print_shdrs(const ElfW(Shdr)* elf_shdrs, const ElfW(Half) shnum, const unsigned char* filebin)
+static void print_shdrs(const ElfW(Shdr)* shdrs, const ElfW(Half) shnum, const byte_t* filebin)
 {
-	const char* shstrtab = (char*)&filebin[elf_shdrs[elf_ehdr->e_shstrndx].sh_offset];
+	const char* shstrtab = (char*)&filebin[shdrs[elf_ehdr->e_shstrndx].sh_offset];
 
 	const ElfW(Sym)* dynsym = NULL;
 	const char* dynstrtab = NULL;
 
 	for (int i=0; i<shnum; i++)
 	{
-		const ElfW(Shdr)* elf_shdr = &elf_shdrs[i];
+		const ElfW(Shdr)* shdr = &shdrs[i];
 
 		printf("\tElf_Shdr[%d]\n", i);
 
-		printf("\t\tsh_name\t%u", elf_shdr->sh_name);
+		printf("\t\tsh_name\t%u", shdr->sh_name);
 		if (shstrtab)
 		{
-			printf(" '%s'", &shstrtab[elf_shdr->sh_name]);
+			printf(" '%s'", &shstrtab[shdr->sh_name]);
 		}
 		puts("");
 
-		printf("\t\tsh_type\t%u (0x%x)\n", elf_shdr->sh_type, elf_shdr->sh_type);
-		printf("\t\tsh_flags\t0x%lx\n", elf_shdr->sh_flags);
-		if (elf_shdr->sh_flags & SHF_INFO_LINK)
+		printf("\t\tsh_type\t%u (0x%x)\t'%s'\n",
+			shdr->sh_type, shdr->sh_type, shdr_type2str(shdr->sh_type));
+
+		printf("\t\tsh_flags\t0x%lx\n", shdr->sh_flags);
+		if (shdr->sh_flags & SHF_INFO_LINK)
 		{
 			puts("\t\t\tSHF_INFO_LINK");
 		}
-		printf("\t\tsh_addr\t%lu (%p)\n", elf_shdr->sh_addr, (void*)elf_shdr->sh_addr);
-		printf("\t\tsh_offset\t%lu (%p)\n", elf_shdr->sh_offset, (void*)elf_shdr->sh_offset);
-		printf("\t\tsh_size\t%lu (0x%lx)\n", elf_shdr->sh_size, elf_shdr->sh_size);
-		printf("\t\tsh_link\t%u\n", elf_shdr->sh_link);
-		printf("\t\tsh_info\t%u\n", elf_shdr->sh_info);
-		printf("\t\tsh_addralign\t%lu\n", elf_shdr->sh_addralign);
-		printf("\t\tsh_entsize\t%lu\n", elf_shdr->sh_entsize);
+		printf("\t\tsh_addr\t%lu (%p)\n", shdr->sh_addr, (void*)shdr->sh_addr);
+		printf("\t\tsh_offset\t%lu (%p)\n", shdr->sh_offset, (void*)shdr->sh_offset);
+		printf("\t\tsh_size\t%lu (0x%lx)\n", shdr->sh_size, shdr->sh_size);
+		printf("\t\tsh_link\t%u\n", shdr->sh_link);
+		printf("\t\tsh_info\t%u\n", shdr->sh_info);
+		printf("\t\tsh_addralign\t%lu\n", shdr->sh_addralign);
+		printf("\t\tsh_entsize\t%lu\n", shdr->sh_entsize);
 
-		const void* filepos = &filebin[elf_shdr->sh_offset];
+		const void* filepos = &filebin[shdr->sh_offset];
 
-		switch (elf_shdr->sh_type)
+		switch (shdr->sh_type)
 		{
 			case SHT_DYNAMIC:
 			{
-				printf("\t\t* sh_type\tSHT_DYNAMIC\n");
 				print_dyns("\t\t\t", (ElfW(Dyn)*)filepos, filebin);
 				break;
 			}
@@ -284,19 +289,13 @@ static void print_shdrs(const ElfW(Shdr)* elf_shdrs, const ElfW(Half) shnum, con
 			case SHT_DYNSYM:
 			{
 				const ElfW(Sym)* syms = (ElfW(Sym)*)filepos;
-				const int nsyms = elf_shdr->sh_size / elf_shdr->sh_entsize;
-				const char* strtab = (char*)&filebin[elf_shdrs[elf_shdr->sh_link].sh_offset];
+				const int nsyms = shdr->sh_size / shdr->sh_entsize;
+				const char* strtab = (char*)&filebin[shdrs[shdr->sh_link].sh_offset];
 
-				if (elf_shdr->sh_type == SHT_DYNSYM)
+				if (shdr->sh_type == SHT_DYNSYM)
 				{
 					dynsym = syms;
 					dynstrtab = strtab;
-
-					puts("\t\t* sh_type\tSHT_DYNSYM");
-				}
-				else
-				{
-					puts("\t\t* sh_type\tSHT_SYMTAB");
 				}
 
 				print_syms("\t\t\t", syms, nsyms, strtab);
@@ -305,10 +304,8 @@ static void print_shdrs(const ElfW(Shdr)* elf_shdrs, const ElfW(Half) shnum, con
 
 			case SHT_RELA:
 			{
-				printf("\t\t* sh_type\tSHT_RELA\n");
-
 				const ElfW(Rela)* relas = (ElfW(Rela)*)filepos;
-				const int nrelas = elf_shdr->sh_size / elf_shdr->sh_entsize;
+				const int nrelas = shdr->sh_size / shdr->sh_entsize;
 
 				for (int i=0; i<nrelas; i++)
 				{
@@ -334,15 +331,12 @@ static void print_shdrs(const ElfW(Shdr)* elf_shdrs, const ElfW(Half) shnum, con
 			case SHT_INIT_ARRAY:
 			case SHT_FINI_ARRAY:
 			{
-				printf("\t\t* sh_type\t%s\n",
-					elf_shdr->sh_type == SHT_INIT_ARRAY ? "SHT_INIT_ARRAY" : "SHT_FINI_ARRAY");
-
-				for (int i=0; i<(elf_shdr->sh_size/elf_shdr->sh_entsize); i++)
+				for (int i=0; i<(shdr->sh_size/shdr->sh_entsize); i++)
 				{
-					const unsigned long offset = *((unsigned long*)(filepos + elf_shdr->sh_entsize * i));
+					const unsigned long offset = *((unsigned long*)(filepos + shdr->sh_entsize * i));
 
 					printf("\t\t\t[%d]=%p\n", i, (void*)offset);
-					print_memory("\t\t\t", (unsigned char*)(filebin + offset), 16);
+					print_memory("\t\t\t", (byte_t*)(filebin + offset), 16);
 				}
 
 				break;
@@ -376,25 +370,13 @@ static void print_strtab(const char* indent, const char* pos)
 	}
 }
 
-static void print_memory(const char* indent, const unsigned char* bytes, const int nbytes)
-{
-	printf("%s\tmemory: ", indent);
-
-	for (int i=0; i<nbytes; i++)
-	{
-		printf("%02x ", bytes[i]);
-	}
-
-	printf("...\n");
-}
-
 #ifdef TFILE
 	#define D_UN_VAL(ba, v) (v.d_val)
 #else
 	#define D_UN_VAL(ba, v) ((ba) + (v.d_val))
 #endif
 
-static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const unsigned char* baseadr)
+static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* baseadr)
 {
 	const char* strtab = NULL;
 
@@ -463,7 +445,7 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const unsigned
 				printf("%s\t%p (%p)\n",
 					indent, (void*)dyn->d_un.d_ptr, (void*)D_UN_VAL(baseadr, dyn->d_un));
 
-				print_memory(indent, (unsigned char*)(baseadr + dyn->d_un.d_val), 16);
+				print_memory(indent, (byte_t*)(baseadr + dyn->d_un.d_val), 16);
 
 				break;
 			}
@@ -517,7 +499,7 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const unsigned
 					for (int i=0; i<(dyn->d_un.d_val/sizeof(ElfW(Addr))); i++)
 					{
 						printf("%s\t[%d]=%p\n", indent, i, (void*)arr[i]);
-						print_memory(indent, (unsigned char*)arr[i], 8);
+						print_memory(indent, (byte_t*)arr[i], 8);
 					}
 				}
 
@@ -536,7 +518,7 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const unsigned
 					for (int i=0; i<(dyn->d_un.d_val/sizeof(ElfW(Addr))); i++)
 					{
 						printf("%s\t[%d]=%p\n", indent, i, (void*)arr[i]);
-						print_memory(indent, (unsigned char*)arr[i], 8);
+						print_memory(indent, (byte_t*)arr[i], 8);
 					}
 				}
 
@@ -593,43 +575,42 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const unsigned
 	}
 }
 
-static void print_phdrs(const ElfW(Phdr)* phdrs, const int nphdrs, const unsigned char* baseadr)
+static void print_phdrs(const ElfW(Phdr)* phdrs, const int nphdrs, const byte_t* baseadr)
 {
 	for (int j = 0; j < nphdrs; j++)
 	{
 		const ElfW(Phdr)* phdr = &phdrs[j];
+
+#ifdef TFILE
+		printf("\tElf_Phdr[%d] (%p)\n", j, (void*)phdr->p_offset);
+		const byte_t* datapos = (void*)(baseadr + phdr->p_offset);
+#else
 		printf("\tElf_Phdr[%d] (%p)\n", j, phdr);
+		const byte_t* datapos = (void*)(baseadr + phdr->p_vaddr);
+#endif
 
-		print_elf_phdr_members("\t\t", phdr);
+		print_phdr_members("\t\t", phdr);
 
-		void* p_vaddr = (void*)(baseadr + phdr->p_vaddr);
-
-		printf("\t\t* p_vaddr=%p\n", p_vaddr);
+		printf("\t\t* datapos=%p\n", datapos);
 
 		switch (phdr->p_type)
 		{
 			case PT_DYNAMIC:
 			{
-				puts("\t\t* p_type=PT_DYNAMIC");
-#ifdef TFILE
-				print_dyns("\t\t\t", (ElfW(Dyn)*)(baseadr + phdr->p_offset), baseadr);
-#else
-				print_dyns("\t\t\t", (ElfW(Dyn)*)p_vaddr, baseadr);
-#endif
+				print_dyns("\t\t\t", (ElfW(Dyn)*)datapos, baseadr);
+
 				break;
 			}
 
 			case PT_INTERP:
 			{
-				puts("\t\t* p_type=PT_INTERP");
-				printf("\t\t\t%s\n", (char*)p_vaddr);
+				printf("\t\t\t%s\n", (char*)datapos);
 				break;
 			}
 
 			case PT_PHDR:
 			{
-				puts("\t\t* p_type=PT_PHDR");
-				print_elf_phdr_members("\t\t\t", p_vaddr);
+				print_phdr_members("\t\t\t", (ElfW(Phdr)*)datapos);
 				break;
 			}
 		}
@@ -649,22 +630,89 @@ static int phdr_callback(struct dl_phdr_info *info, size_t size, void *data)
 	printf("name='%s' (%d segments) base=%p\n",
 		info->dlpi_name, info->dlpi_phnum, (void*)info->dlpi_addr);
 
-	print_phdrs(info->dlpi_phdr, info->dlpi_phnum, (unsigned char*)info->dlpi_addr);
+	print_phdrs(info->dlpi_phdr, info->dlpi_phnum, (byte_t*)info->dlpi_addr);
 
 
 	return 0;
 }
 #endif
 
-static void print_elf_phdr_members(const char* indent, const ElfW(Phdr)* elf_phdr)
+static void print_phdr_members(const char* indent, const ElfW(Phdr)* phdr)
 {
-	printf("%sp_type\t0x%x\n", indent, elf_phdr->p_type);
-	printf("%sp_offset\t%lu (0x%lx)\n", indent, elf_phdr->p_offset, elf_phdr->p_offset);
-	printf("%sp_vaddr\t%lu (%p)\n", indent, elf_phdr->p_vaddr, (void*)elf_phdr->p_vaddr);
-	printf("%sp_paddr\t%lu (%p)\n", indent, elf_phdr->p_paddr, (void*)elf_phdr->p_paddr);
-	printf("%sp_filesz\t%lu\n", indent, elf_phdr->p_filesz);
-	printf("%sp_memsz\t%lu\n", indent, elf_phdr->p_memsz);
-	printf("%sp_flags\t0x%x\n", indent, elf_phdr->p_flags);
-	printf("%sp_align\t%lu\n", indent, elf_phdr->p_align);
+	printf("%sp_type\t0x%x\t'%s'\n", indent, phdr->p_type, phdr_type2str(phdr->p_type));
+	printf("%sp_offset\t%lu (0x%lx)\n", indent, phdr->p_offset, phdr->p_offset);
+	printf("%sp_vaddr\t%lu (%p)\n", indent, phdr->p_vaddr, (void*)phdr->p_vaddr);
+	printf("%sp_paddr\t%lu (%p)\n", indent, phdr->p_paddr, (void*)phdr->p_paddr);
+	printf("%sp_filesz\t%lu\n", indent, phdr->p_filesz);
+	printf("%sp_memsz\t%lu\n", indent, phdr->p_memsz);
+	printf("%sp_flags\t0x%x\n", indent, phdr->p_flags);
+	printf("%sp_align\t%lu\n", indent, phdr->p_align);
+}
+
+static void print_memory(const char* indent, const byte_t* bytes, const int nbytes)
+{
+	printf("%s\tmemory: ", indent);
+
+	for (int i=0; i<nbytes; i++)
+	{
+		printf("%02x ", bytes[i]);
+	}
+
+	printf("...\n");
+}
+
+static const char* phdr_type2str(const ElfW(Word) type)
+{
+	switch (type)
+	{
+		case PT_NULL:			return "PT_NULL";
+		case PT_LOAD:			return "PT_LOAD";
+		case PT_DYNAMIC:		return "PT_DYNAMIC";
+		case PT_INTERP:			return "PT_INTERP";
+		case PT_NOTE:			return "PT_NOTE";
+		case PT_SHLIB:			return "PT_SHLIB";
+		case PT_PHDR:			return "PT_PHDR";
+		case PT_TLS:			return "PT_TLS";
+		case PT_LOOS:			return "PT_LOOS";
+		case PT_HIOS:			return "PT_HIOS";
+		case PT_LOPROC:			return "PT_LOPROC";
+		case PT_HIPROC:			return "PT_HIPROC";
+		case PT_GNU_EH_FRAME:	return "PT_GNU_EH_FRAME";
+		case PT_GNU_STACK:		return "PT_GNU_STACK";
+		case PT_GNU_RELRO:		return "PT_GNU_RELRO";
+	}
+
+	return "***";
+}
+
+static const char* shdr_type2str(const ElfW(Word) type)
+{
+	switch (type)
+	{
+		case SHT_NULL:			return "SHT_NULL";
+		case SHT_PROGBITS:		return "SHT_PROGBITS";
+		case SHT_SYMTAB:		return "SHT_SYMTAB";
+		case SHT_STRTAB:		return "SHT_STRTAB";
+		case SHT_RELA:			return "SHT_RELA";
+		case SHT_HASH:			return "SHT_HASH";
+		case SHT_DYNAMIC:		return "SHT_DYNAMIC";
+		case SHT_NOTE:			return "SHT_NOTE";
+		case SHT_NOBITS:		return "SHT_NOBITS";
+		case SHT_REL:			return "SHT_REL";
+		case SHT_SHLIB:			return "SHT_SHLIB";
+		case SHT_DYNSYM:		return "SHT_DYNSYM";
+		case SHT_INIT_ARRAY:	return "SHT_INIT_ARRAY";
+		case SHT_FINI_ARRAY:	return "SHT_FINI_ARRAY";
+		case SHT_PREINIT_ARRAY:	return "SHT_PREINIT_ARRAY";
+		case SHT_GROUP:			return "SHT_GROUP";
+		case SHT_SYMTAB_SHNDX:	return "SHT_SYMTAB_SHNDX";
+		case SHT_NUM:			return "SHT_NUM";
+		case SHT_LOPROC:		return "SHT_LOPROC";
+		case SHT_HIPROC:		return "SHT_HIPROC";
+		case SHT_LOUSER:		return "SHT_LOUSER";
+		case SHT_HIUSER:		return "SHT_HIUSER";
+	}
+
+	return "***";
 }
 
