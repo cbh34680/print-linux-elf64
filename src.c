@@ -72,16 +72,15 @@ static void print_phdrs(const ElfW(Phdr)* phdrs, const int nphdrs, const byte_t*
 static void print_phdr_members(const char* indent, const ElfW(Phdr)* elf_phdr);
 static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* baseadr);
 static void print_syms(const char* indent, const ElfW(Sym)* syms, const int start, const int nsyms, const char* strtab);
+static void print_note(const char* indent, const void* datapos, const ElfW(Xword) p_filesz);
 
 #ifdef TFILE
-static void print_shdrs(const ElfW(Shdr)* shdr, const ElfW(Half) shnum, const byte_t* filebin);
+static void print_shdrs(const ElfW(Ehdr)* ehdr, const ElfW(Shdr)* shdr, const ElfW(Half) shnum, const byte_t* filebin);
 static const char* shdr_type2str(const ElfW(Word) type);
 #endif
 
-static void print_memory(const char* indent, const byte_t* bytes, const int nbytes);
+static void print_memory(const char* indent, const byte_t* bytes, const int nbytes, const int and_more);
 static const char* phdr_type2str(const ElfW(Word) type);
-
-const ElfW(Ehdr)* elf_ehdr = NULL;
 
 int main(int argc, char** argv)
 {
@@ -106,69 +105,67 @@ int main(int argc, char** argv)
 	const u_long at_phdr = getauxval(AT_PHDR);
 	const u_long at_entry = getauxval(AT_ENTRY);
 
-	printf("AT_BASE\t%p\n", (void*)at_base);
+	printf("AT_SYSINFO_EHDR\t%p ('linux-vdso.so.1')\n", (void*)getauxval(AT_SYSINFO_EHDR));
+	printf("AT_BASE\t%p ('/lib64/ld-linux-x86-64.so.2')\n", (void*)at_base);
 	printf("AT_PHDR\t%p\n", (void*)at_phdr);
 	printf("AT_ENTRY\t%p\n", (void*)at_entry);
-	printf("AT_SYSINFO_EHDR\t%p\n", (void*)getauxval(AT_SYSINFO_EHDR));
 #endif
 
 #ifdef TFILE
-	elf_ehdr = (ElfW(Ehdr)*)filebin;
+	const ElfW(Ehdr)* ehdr = (ElfW(Ehdr)*)filebin;
 	printf("Elf_Ehdr (0x0)\n");
 #else
-	elf_ehdr = (ElfW(Ehdr)*)at_base;
-	printf("Elf_Ehdr (%p)\n", elf_ehdr);
+	const ElfW(Ehdr)* ehdr = (ElfW(Ehdr)*)at_base;
+	printf("Elf_Ehdr (%p)\n", ehdr);
 #endif
 
 	puts("\te_ident");
-	assert(elf_ehdr->e_ident[EI_MAG0] == 0x7f);
-	assert(elf_ehdr->e_ident[EI_MAG1] == 'E');
-	assert(elf_ehdr->e_ident[EI_MAG2] == 'L');
-	assert(elf_ehdr->e_ident[EI_MAG3] == 'F');
-	assert(elf_ehdr->e_ident[EI_CLASS] == ELFCLASS64);
-	assert(elf_ehdr->e_ident[EI_DATA] == ELFDATA2LSB);
-	assert(elf_ehdr->e_ident[EI_VERSION] == EV_CURRENT);
+	assert(ehdr->e_ident[EI_MAG0] == 0x7f);
+	assert(ehdr->e_ident[EI_MAG1] == 'E');
+	assert(ehdr->e_ident[EI_MAG2] == 'L');
+	assert(ehdr->e_ident[EI_MAG3] == 'F');
+	assert(ehdr->e_ident[EI_CLASS] == ELFCLASS64);
+	assert(ehdr->e_ident[EI_DATA] == ELFDATA2LSB);
+	assert(ehdr->e_ident[EI_VERSION] == EV_CURRENT);
 
-	printf("\t\tEI_OSABI\t%d\n", elf_ehdr->e_ident[EI_OSABI]);
-	printf("\t\tEI_ABIVERSION\t%d\n", elf_ehdr->e_ident[EI_ABIVERSION]);
+	printf("\t\tEI_OSABI\t%d\n", ehdr->e_ident[EI_OSABI]);
+	printf("\t\tEI_ABIVERSION\t%d\n", ehdr->e_ident[EI_ABIVERSION]);
 
-	printf("\te_type\t%d\n", elf_ehdr->e_type);
-	assert(elf_ehdr->e_machine == 62);
-	assert(elf_ehdr->e_version == 1);
-	printf("\te_entry\t%p\n", (void*)elf_ehdr->e_entry);
-	printf("\te_phoff\t%lu\n", elf_ehdr->e_phoff);
-	printf("\te_shoff\t%lu (%p)\n", elf_ehdr->e_shoff, (void*)elf_ehdr->e_shoff);
-	assert(elf_ehdr->e_flags == 0);
+	printf("\te_type\t%d\n", ehdr->e_type);
+	assert(ehdr->e_machine == 62);
+	assert(ehdr->e_version == 1);
+	printf("\te_entry\t%p\n", (void*)ehdr->e_entry);
+	printf("\te_phoff\t%lu\n", ehdr->e_phoff);
+	printf("\te_shoff\t%lu (%p)\n", ehdr->e_shoff, (void*)ehdr->e_shoff);
+	assert(ehdr->e_flags == 0);
 
-	printf("\te_ehsize\t%u\n", elf_ehdr->e_ehsize);
-	assert(elf_ehdr->e_ehsize == sizeof(ElfW(Ehdr)));
-	printf("\te_phentsize\t%u\n", elf_ehdr->e_phentsize);
-	assert(elf_ehdr->e_phentsize == sizeof(ElfW(Phdr)));
-	printf("\te_phnum\t%u\n", elf_ehdr->e_phnum);
-	printf("\te_shentsize\t%u\n", elf_ehdr->e_shentsize);
-	assert(elf_ehdr->e_shentsize == sizeof(ElfW(Shdr)));
-	printf("\te_shnum\t%u\n", elf_ehdr->e_shnum);
-	printf("\te_shstrndx\t%u\n", elf_ehdr->e_shstrndx);
+	printf("\te_ehsize\t%u\n", ehdr->e_ehsize);
+	assert(ehdr->e_ehsize == sizeof(ElfW(Ehdr)));
+	printf("\te_phentsize\t%u\n", ehdr->e_phentsize);
+	assert(ehdr->e_phentsize == sizeof(ElfW(Phdr)));
+	printf("\te_phnum\t%u\n", ehdr->e_phnum);
+	printf("\te_shentsize\t%u\n", ehdr->e_shentsize);
+	assert(ehdr->e_shentsize == sizeof(ElfW(Shdr)));
+	printf("\te_shnum\t%u\n", ehdr->e_shnum);
+	printf("\te_shstrndx\t%u\n", ehdr->e_shstrndx);
 
 #ifdef TFILE
+	const ElfW(Phdr)* elf_phdrs = (ElfW(Phdr)*)&filebin[ehdr->e_phoff];
+	printf("Elf_Phdr (%p)\n", (void*)ehdr->e_phoff);
 
-	const ElfW(Phdr)* elf_phdrs = (ElfW(Phdr)*)&filebin[elf_ehdr->e_phoff];
-	printf("Elf_Phdr (%p)\n", (void*)elf_ehdr->e_phoff);
-
-#if 0
-	for (int i=0; i<elf_ehdr->e_phnum; i++)
+/*
+	for (int i=0; i<ehdr->e_phnum; i++)
 	{
 		printf("\tElf_Phdr[%d]\n", i);
 		print_phdr_members("\t\t", &elf_phdrs[i]);
 	}
-#else
-	print_phdrs(elf_phdrs, elf_ehdr->e_phnum, filebin);
-#endif
+*/
+	print_phdrs(elf_phdrs, ehdr->e_phnum, filebin);
 
 	//
-	printf("Elf_Shdr (%p)\n", (void*)elf_ehdr->e_shoff);
+	printf("Elf_Shdr (%p)\n", (void*)ehdr->e_shoff);
 
-	print_shdrs((ElfW(Shdr)*)&filebin[elf_ehdr->e_shoff], elf_ehdr->e_shnum, filebin);
+	print_shdrs(ehdr, (ElfW(Shdr)*)&filebin[ehdr->e_shoff], ehdr->e_shnum, filebin);
 
 #else
 	puts("Elf_Phdr");
@@ -177,8 +174,7 @@ int main(int argc, char** argv)
 #endif
 
 
-#ifdef TFILE
-#else
+#ifdef TMEM
 	const void* v_entry = (void*)at_entry;
 #endif
 
@@ -247,9 +243,9 @@ static void print_syms(const char* indent, const ElfW(Sym)* syms, const int star
 }
 
 #ifdef TFILE
-static void print_shdrs(const ElfW(Shdr)* shdrs, const ElfW(Half) shnum, const byte_t* filebin)
+static void print_shdrs(const ElfW(Ehdr)* ehdr, const ElfW(Shdr)* shdrs, const ElfW(Half) shnum, const byte_t* filebin)
 {
-	const char* shstrtab = (char*)&filebin[shdrs[elf_ehdr->e_shstrndx].sh_offset];
+	const char* shstrtab = (char*)&filebin[shdrs[ehdr->e_shstrndx].sh_offset];
 
 	const ElfW(Sym)* dynsym = NULL;
 	const char* dynstrtab = NULL;
@@ -343,10 +339,16 @@ static void print_shdrs(const ElfW(Shdr)* shdrs, const ElfW(Half) shnum, const b
 				{
 					const unsigned long offset = *((unsigned long*)(filepos + shdr->sh_entsize * i));
 
-					printf("\t\t\t[%d]=%p\n", i, (void*)offset);
-					print_memory("\t\t\t", (byte_t*)(filebin + offset), 16);
+					printf("\t\t\t[%d]=%p", i, (void*)offset);
+					print_memory("\t", (byte_t*)(filebin + offset), 16, 1);
 				}
 
+				break;
+			}
+
+			case SHT_NOTE:
+			{
+				print_note("\t\t\t", filepos, shdr->sh_size);
 				break;
 			}
 
@@ -388,7 +390,8 @@ static void print_strtab(const char* indent, const char* pos)
 }
 
 static const char* dyn_tag2str(const ElfW(Xword) tag);
-static Elf_Symndx lookup_sym(const char* indent, const uint32_t* hash32, const char* key);
+static Elf_Symndx lookup_sym_gnu(const char* indent, const uint32_t* hash32, const char* key);
+static uint32_t new_hash_elf(const char* name);
 
 #ifdef TFILE
 	#define D_UN_VAL(ba, v) (v.d_val)
@@ -429,7 +432,9 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 	ElfW(Addr) init_array = 0;
 	ElfW(Addr) fini_array = 0;
 	const ElfW(Sym)* symtab = NULL;
-	ElfW(Addr) hashtab = 0;
+
+	ElfW(Addr) hashtab_gnu = 0;
+	ElfW(Addr) hashtab_elf = 0;
 
 	for (int idx=0; dyns[idx].d_un.d_val != DT_NULL; idx++)
 	{
@@ -473,7 +478,7 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 				printf("%s\t%p (%p)\n",
 					indent, (void*)dyn->d_un.d_ptr, (void*)D_UN_VAL(baseadr, dyn->d_un));
 
-				print_memory(indent1, (byte_t*)(baseadr + dyn->d_un.d_val), 16);
+				print_memory(indent1, (byte_t*)(baseadr + dyn->d_un.d_val), 16, 1);
 
 				break;
 			}
@@ -483,7 +488,7 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 				printf("%s\t%p (%p)\n",
 					indent, (void*)dyn->d_un.d_ptr, (void*)D_UN_VAL(baseadr, dyn->d_un));
 
-				print_memory(indent1, baseadr + dyn->d_un.d_val, 16);
+				print_memory(indent1, baseadr + dyn->d_un.d_val, 16, 1);
 
 				break;
 			}
@@ -529,7 +534,7 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 					for (int i=0; i<(dyn->d_un.d_val/sizeof(ElfW(Addr))); i++)
 					{
 						printf("%s\t[%d]=%p\n", indent, i, (void*)arr[i]);
-						print_memory(indent1, (byte_t*)arr[i], 8);
+						print_memory(indent1, (byte_t*)arr[i], 16, 1);
 					}
 				}
 
@@ -547,9 +552,26 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 					for (int i=0; i<(dyn->d_un.d_val/sizeof(ElfW(Addr))); i++)
 					{
 						printf("%s\t[%d]=%p\n", indent, i, (void*)arr[i]);
-						print_memory(indent1, (byte_t*)arr[i], 8);
+						print_memory(indent1, (byte_t*)arr[i], 16, 1);
 					}
 				}
+
+				break;
+			}
+
+			case DT_HASH:
+			{
+				// https://github.com/robgjansen/elf-loader/blob/master/vdl-lookup.c#L118
+				// https://flapenguin.me/elf-dt-hash
+
+#ifdef TFILE
+				hashtab_elf = (ElfW(Addr))(baseadr + dyn->d_un.d_ptr);
+#else
+				hashtab_elf = (ElfW(Addr))dyn->d_un.d_ptr;
+#endif
+
+				printf("%s\t%p\n", indent, (void*)hashtab_elf);
+				print_memory(indent1, (byte_t*)hashtab_elf, 16, 1);
 
 				break;
 			}
@@ -560,13 +582,13 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 				// https://chowdera.com/2021/06/20210617215010995Q.html
 
 #ifdef TFILE
-				hashtab = (ElfW(Addr))(baseadr + dyn->d_un.d_ptr);
+				hashtab_gnu = (ElfW(Addr))(baseadr + dyn->d_un.d_ptr);
 #else
-				hashtab = (ElfW(Addr))dyn->d_un.d_ptr;
+				hashtab_gnu = (ElfW(Addr))dyn->d_un.d_ptr;
 #endif
 
-				printf("%s\t%p\n", indent, (void*)hashtab);
-				print_memory(indent1, (byte_t*)hashtab, 16);
+				printf("%s\t%p\n", indent, (void*)hashtab_gnu);
+				print_memory(indent1, (byte_t*)hashtab_gnu, 16, 1);
 
 				break;
 			}
@@ -581,25 +603,69 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 
 				printf("%s\t%p\n", indent, (void*)symtab);
 
-				if (strtab)
+				if (!strtab)
+					break;
+
+				print_syms(indent1, symtab, 0, 3, strtab);
+				printf("%s...\n", indent1);
+				printf("%s...\n", indent1);
+
+				const char* lookup_name = "realloc";
+
+				if (hashtab_gnu)
 				{
-					print_syms(indent1, symtab, 0, 3, strtab);
-					printf("%s...\n", indent1);
-					printf("%s...\n", indent1);
+					printf("%s((gnu TEST S)) lookup('%s')\n", indent1, lookup_name);
 
-					if (hashtab)
+					const Elf_Symndx symidx = lookup_sym_gnu(
+						indent2, (uint32_t*)hashtab_gnu, lookup_name);
+
+					printf("%s((gnu RESULT)) =>%u\n", indent1, symidx);
+					if (symidx)
 					{
-						//lookup_sym(indent1, (uint32_t*)hashtab, symtab, strtab, "realloc");
+						print_syms(indent2, symtab, symidx, 1, strtab);
+					}
 
-						const Elf_Symndx symidx = lookup_sym(indent1, (uint32_t*)hashtab, "realloc");
+					printf("%s((gnu TEST E)) lookup('%s')\n", indent1, lookup_name);
+				}
 
-						printf("%s(TEST) lookup('realloc')=>%u\n", indent1, symidx);
+				if (hashtab_elf)
+				{
+					//
+					// https://docs.oracle.com/cd/E26924_01/html/E25909/chapter6-48031.html#scrolltoc
+					// https://flapenguin.me/elf-dt-hash
+					//
+					printf("%s((elf TEST S)) lookup('%s')\n", indent1, lookup_name);
 
-						if (symidx)
+					const uint32_t hash = new_hash_elf(lookup_name);
+					printf("%shash=%u (%x)\n", indent2, hash, hash);
+
+					const uint32_t* hashtab = (uint32_t*)hashtab_elf;
+					const uint32_t nbucket = hashtab[0];
+					const uint32_t nchain = hashtab[1];
+					const uint32_t* bucket = &hashtab[2];
+					const uint32_t* chain = &bucket[nbucket];
+
+					printf("%snbuckets=%u\n", indent2, nbucket);
+					printf("%snchain=%u\n", indent2, nchain);
+
+					Elf_Symndx symidx = SHN_UNDEF;
+
+					for (uint32_t i = bucket[hash % nbucket]; i; i = chain[i])
+					{
+						if (strcmp(lookup_name, strtab + symtab[i].st_name) == 0)
 						{
-							print_syms(indent2, symtab, symidx, 1, strtab);
+							symidx = i;
+							break;
 						}
 					}
+
+					printf("%s((elf RESULT)) =>%u\n", indent1, symidx);
+					if (symidx)
+					{
+						print_syms(indent2, symtab, symidx, 1, strtab);
+					}
+
+					printf("%s((elf TEST E)) lookup('%s')\n", indent1, lookup_name);
 				}
 
 				break;
@@ -608,16 +674,6 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 			case DT_SYMENT:
 			{
 				printf("%s\t%lu:%lu\n", indent, dyn->d_un.d_val, sizeof(Elf64_Sym));
-
-				break;
-			}
-
-
-			case DT_HASH:
-			{
-				// https://github.com/robgjansen/elf-loader/blob/master/vdl-lookup.c#L118
-
-				printf("%s\t%p\n", indent, (void*)dyn->d_un.d_ptr);
 
 				break;
 			}
@@ -631,23 +687,31 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 	}
 }
 
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
 static void print_phdrs(const ElfW(Phdr)* phdrs, const int nphdrs, const byte_t* baseadr)
 {
 	for (int j = 0; j < nphdrs; j++)
 	{
 		const ElfW(Phdr)* phdr = &phdrs[j];
+		printf("\tElf_Phdr[%d]\n", j);
 
 #ifdef TFILE
-		printf("\tElf_Phdr[%d] (%p)\n", j, (void*)phdr->p_offset);
-		const byte_t* datapos = (void*)(baseadr + phdr->p_offset);
+		const byte_t* datapos = (byte_t*)(baseadr + phdr->p_offset);
 #else
-		printf("\tElf_Phdr[%d] (%p)\n", j, phdr);
-		const byte_t* datapos = (void*)(baseadr + phdr->p_vaddr);
+		const byte_t* datapos = (byte_t*)(baseadr + phdr->p_vaddr);
 #endif
-
 		print_phdr_members("\t\t", phdr);
 
-		printf("\t\t* datapos=%p\n", datapos);
+#ifdef TMEM
+		printf("\t\t\t* base=%p\n", baseadr);
+		printf("\t\t\t* phdr=%p\n", phdr);
+
+		if (phdr->p_filesz)
+		{
+			printf("\t\t\t* data=%p\n", datapos);
+		}
+#endif
 
 		switch (phdr->p_type)
 		{
@@ -669,8 +733,70 @@ static void print_phdrs(const ElfW(Phdr)* phdrs, const int nphdrs, const byte_t*
 				print_phdr_members("\t\t\t", (ElfW(Phdr)*)datapos);
 				break;
 			}
+
+			case PT_LOAD:
+			{
+				print_memory("\t\t\t", datapos, MIN(16, phdr->p_memsz), 1);
+				break;
+			}
+
+			case PT_NOTE:
+			{
+				// https://docs.oracle.com/cd/E38900_01/html/E38860/chapter6-18048.html#scrolltoc
+
+				print_note("\t\t\t", datapos, phdr->p_filesz);
+
+				break;
+			}
 		}
 	}
+}
+
+static void print_note(const char* indent, const void* datapos, const ElfW(Xword) p_filesz)
+{
+	const void* next = datapos;
+
+	do
+	{
+		const uint32_t* namesz = next;
+		const uint32_t* descsz = namesz + 1;
+		const uint32_t* type = descsz + 1;
+
+		printf("%snamesz\t%u\n", indent, *namesz);
+		printf("%sdescsz\t%u\n", indent, *descsz);
+
+		printf("%stype\t%u\n", indent, *type);
+
+		const char* name = (char*)(type + 1);
+
+		if (*namesz)
+		{
+			printf("%sname\t'%s'\n", indent, name);
+
+			const int skip = ((*namesz / 4) + (*namesz % 4 > 0 ? 1 : 0)) * 4;
+			printf("%sn-skip\t%d\n", indent, skip);
+
+			name += skip;
+		}
+
+		const byte_t* desc = (byte_t*)name;
+
+		if (*descsz)
+		{
+			printf("%sdesc", indent);
+			print_memory("\t", desc, MIN(*descsz, 16), *descsz <= 16 ? 0 : 1);
+
+			const int skip = ((*descsz / 4) + (*descsz % 4 > 0 ? 1 : 0)) * 4;
+			printf("%sd-skip\t%d\n", indent, skip);
+
+			desc += skip;
+		}
+
+		next = desc;
+
+		//printf("\t\toffset\t%ld\n", next - (void*)datapos);
+	}
+	while (next - datapos < p_filesz);
 }
 
 #ifdef TMEM
@@ -701,20 +827,30 @@ static void print_phdr_members(const char* indent, const ElfW(Phdr)* phdr)
 	printf("%sp_paddr\t%lu (%p)\n", indent, phdr->p_paddr, (void*)phdr->p_paddr);
 	printf("%sp_filesz\t%lu\n", indent, phdr->p_filesz);
 	printf("%sp_memsz\t%lu\n", indent, phdr->p_memsz);
-	printf("%sp_flags\t0x%x\n", indent, phdr->p_flags);
+	printf("%sp_flags\t0x%x (%c%c%c%c)\n", indent, phdr->p_flags,
+		phdr->p_flags & PF_X ? 'X' : '_',
+		phdr->p_flags & PF_W ? 'W' : '_',
+		phdr->p_flags & PF_R ? 'R' : '_',
+		phdr->p_flags & PF_MASKPROC ? 'M' : '_'
+	);
 	printf("%sp_align\t%lu\n", indent, phdr->p_align);
 }
 
-static void print_memory(const char* indent, const byte_t* bytes, const int nbytes)
+static void print_memory(const char* indent, const byte_t* bytes, const int nbytes, const int and_more)
 {
-	printf("%s\tmemory: ", indent);
+	printf("%s{", indent);
 
 	for (int i=0; i<nbytes; i++)
 	{
-		printf("%02x ", bytes[i]);
+		printf("%s%02x ", (i % 4 == 0) ? " " : "", bytes[i]);
 	}
 
-	printf("...\n");
+	if (and_more)
+	{
+		printf("...");
+	}
+
+	puts("}");
 }
 
 //
@@ -722,7 +858,7 @@ static void print_memory(const char* indent, const byte_t* bytes, const int nbyt
 // https://sources.debian.org/src/glibc/2.31-13%2Bdeb11u3/elf/dl-lookup.c/#L578-L585
 // https://sources.debian.org/src/glibc/2.31-13%2Bdeb11u3/elf/dl-lookup.c/#L411-L447
 //
-static uint32_t dl_new_hash (const char *s)
+static uint32_t new_hash_gnu(const char *s)
 {
 	uint32_t h = 5381;
 
@@ -732,7 +868,31 @@ static uint32_t dl_new_hash (const char *s)
 	return h & 0xffffffff;
 }
 
-static Elf_Symndx lookup_sym(const char* indent, const uint32_t* hash32, const char* key)
+//
+// https://flapenguin.me/elf-dt-hash
+// https://github.com/unikraft/lib-libelf/blob/staging/elf_hash.c
+//
+static uint32_t new_hash_elf(const char* name)
+{
+	uint32_t h = 0, g;
+
+	for (; *name; name++)
+	{
+		h = (h << 4) + *name;
+
+		//if (g = h & 0xf0000000)
+		g = h & 0xf0000000;
+		if (g)
+			h ^= g >> 24;
+
+		h &= ~g;
+	}
+
+	return h;
+}
+
+
+static Elf_Symndx lookup_sym_gnu(const char* indent, const uint32_t* hash32, const char* key)
 {
 	const uint32_t l_nbuckets = *hash32++;
 	const uint32_t symbias = *hash32++;
@@ -749,36 +909,36 @@ static Elf_Symndx lookup_sym(const char* indent, const uint32_t* hash32, const c
 	const uint32_t* l_gnu_chain_zero = hash32 - symbias;
 
 	//
-	printf("l_nbuckets=%u\n", l_nbuckets);
-	printf("symbias=%u\n", symbias);
-	printf("bitmask_nwords=%u\n", bitmask_nwords);
-	printf("l_gnu_bitmask_idxbits=%u\n", l_gnu_bitmask_idxbits);
-	printf("l_gnu_shift=%u\n", l_gnu_shift);
+	printf("%sl_nbuckets=%u\n", indent, l_nbuckets);
+	printf("%ssymbias=%u\n", indent, symbias);
+	printf("%sbitmask_nwords=%u\n", indent, bitmask_nwords);
+	printf("%sl_gnu_bitmask_idxbits=%u\n", indent, l_gnu_bitmask_idxbits);
+	printf("%sl_gnu_shift=%u\n", indent, l_gnu_shift);
 
 	//
-	const uint32_t new_hash = dl_new_hash(key);
-	printf("new_hash=%x\n", new_hash);
+	const uint32_t new_hash = new_hash_gnu(key);
+	printf("%snew_hash=%x\n", indent, new_hash);
 
 	//
 	const ElfW(Addr)* bitmask = l_gnu_bitmask;
 	const ElfW(Addr) bitmask_word = bitmask[(new_hash / __ELF_NATIVE_CLASS) & l_gnu_bitmask_idxbits];
 
-	printf("bitmask_word=0x%lx\n", bitmask_word);
+	printf("%sbitmask_word=0x%lx\n", indent, bitmask_word);
 
 	//
 	const unsigned int hashbit1 = new_hash & (__ELF_NATIVE_CLASS - 1);
 	const unsigned int hashbit2 = ((new_hash >> l_gnu_shift) & (__ELF_NATIVE_CLASS - 1));
 
-	printf("hashbit1=%u, hashbit2=%u\n", hashbit1, hashbit2);
+	printf("%shashbit1=%u, hashbit2=%u\n", indent, hashbit1, hashbit2);
 
 	//
 	//if (__glibc_unlikely((bitmask_word >> hashbit1) & (bitmask_word >> hashbit2) & 1))
 	if ((bitmask_word >> hashbit1) & (bitmask_word >> hashbit2) & 1)
 	{
-		printf("[x]=%u\n", new_hash % l_nbuckets);
+		printf("%s[x]=%u\n", indent, new_hash % l_nbuckets);
 
 		const Elf32_Word bucket = l_gnu_buckets[new_hash % l_nbuckets];
-		printf("bucket=%u\n", bucket);
+		printf("%sbucket=%u\n", indent, bucket);
 
 		if (bucket != 0)
 		{
@@ -786,12 +946,12 @@ static Elf_Symndx lookup_sym(const char* indent, const uint32_t* hash32, const c
 
 			do
 			{
-				printf("*hasharr=%u new_hash=%u\n", *hasharr, new_hash);
+				printf("%s*hasharr=%u new_hash=%u\n", indent, *hasharr, new_hash);
 
 				if (((*hasharr ^ new_hash) >> 1) == 0)
 				{
 					const Elf_Symndx symidx = hasharr - l_gnu_chain_zero;
-					printf("symidx=%x\n", symidx);
+					printf("%ssymidx=%x\n", indent, symidx);
 
 					return symidx;
 				}
@@ -800,7 +960,7 @@ static Elf_Symndx lookup_sym(const char* indent, const uint32_t* hash32, const c
 		}
 	}
 
-	puts("done.");
+	printf("%sdone.\n", indent);
 
 	return SHN_UNDEF;
 }
@@ -857,6 +1017,8 @@ static const char* shdr_type2str(const ElfW(Word) type)
 		case SHT_LOUSER:		return "SHT_LOUSER";
 		case SHT_HIUSER:		return "SHT_HIUSER";
 		case SHT_GNU_HASH:		return "SHT_GNU_HASH";
+		case SHT_GNU_versym:	return "SHT_GNU_versym";
+		case SHT_GNU_verneed:	return "SHT_GNU_verneed";
 	}
 
 	return "***";
