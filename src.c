@@ -243,6 +243,7 @@ static void print_syms(const char* indent, const ElfW(Sym)* syms, const int star
 }
 
 static void print_strtab(const char* indent, const char* pos);
+static void print_relas(const char* indent, const ElfW(Rela)* relas, const int nrelas, const ElfW(Sym)* symtab, const char* strtab);
 
 #ifdef TFILE
 static void print_shdrs(const ElfW(Ehdr)* ehdr, const ElfW(Shdr)* shdrs, const ElfW(Half) shnum, const byte_t* filebin)
@@ -307,44 +308,45 @@ static void print_shdrs(const ElfW(Ehdr)* ehdr, const ElfW(Shdr)* shdrs, const E
 			}
 
 			case SHT_SYMTAB:
+			{
+				const ElfW(Sym)* syms = (ElfW(Sym)*)filepos;
+				const int nsyms = shdr->sh_size / shdr->sh_entsize;
+				const char* strtab = (char*)&filebin[shdrs[shdr->sh_link].sh_offset];
+
+				print_syms("\t\t\t", syms, 0, nsyms, strtab);
+
+				break;
+			}
+
 			case SHT_DYNSYM:
 			{
 				const ElfW(Sym)* syms = (ElfW(Sym)*)filepos;
 				const int nsyms = shdr->sh_size / shdr->sh_entsize;
 				const char* strtab = (char*)&filebin[shdrs[shdr->sh_link].sh_offset];
 
-				if (shdr->sh_type == SHT_DYNSYM)
-				{
-					dynsym = syms;
-					dynstrtab = strtab;
-				}
-
 				print_syms("\t\t\t", syms, 0, nsyms, strtab);
+
+				dynsym = syms;
+				dynstrtab = strtab;
+
 				break;
 			}
+
+/*
+			case SHT_DYNSTR:
+			{
+				break;
+			}
+*/
 
 			case SHT_RELA:
 			{
 				const ElfW(Rela)* relas = (ElfW(Rela)*)filepos;
+
+				assert(shdr->sh_entsize == sizeof(ElfW(Rela)));
 				const int nrelas = shdr->sh_size / shdr->sh_entsize;
 
-				for (int i=0; i<nrelas; i++)
-				{
-					const ElfW(Rela)* rela = (ElfW(Rela)*)&relas[i];
-
-					const int r_info_sym = ELF64_R_SYM(rela->r_info);
-
-					printf("\t\t\tr_offset\t%p\n", (void*)rela->r_offset);
-					printf("\t\t\tr_info(sym)\t%d\n", r_info_sym);
-
-					if (dynsym && dynstrtab)
-					{
-						printf("\t\t\t\t'%s'\n", &dynstrtab[dynsym[r_info_sym].st_name]);
-					}
-
-					printf("\t\t\tr_info(type)\t%lu\n", ELF64_R_TYPE(rela->r_info));
-					printf("\t\t\tr_addend\t%ld\n", rela->r_addend);
-				}
+				print_relas("\t\t\t", relas, nrelas, dynsym, dynstrtab);
 
 				break;
 			}
@@ -383,6 +385,27 @@ static void print_shdrs(const ElfW(Ehdr)* ehdr, const ElfW(Shdr)* shdrs, const E
 	}
 }
 #endif
+
+static void print_relas(const char* indent, const ElfW(Rela)* relas, const int nrelas, const ElfW(Sym)* symtab, const char* strtab)
+{
+	for (int i=0; i<nrelas; i++)
+	{
+		const ElfW(Rela)* rela = (ElfW(Rela)*)&relas[i];
+
+		const int r_info_sym = ELF64_R_SYM(rela->r_info);
+
+		printf("%sr_offset\t%p\n", indent, (void*)rela->r_offset);
+		printf("%sr_info(sym)\t%d\n", indent, r_info_sym);
+
+		if (symtab && strtab)
+		{
+			printf("%s\t\t'%s'\n", indent, &strtab[symtab[r_info_sym].st_name]);
+		}
+
+		printf("%sr_info(type)\t%lu\n", indent, ELF64_R_TYPE(rela->r_info));
+		printf("%sr_addend\t%ld\n", indent, rela->r_addend);
+	}
+}
 
 static void print_strtab(const char* indent, const char* pos)
 {
@@ -459,12 +482,17 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 	ElfW(Addr) hashtab_gnu = 0;
 	ElfW(Addr) hashtab_elf = 0;
 
+	const ElfW(Rela)* rela = NULL;
+	ElfW(Xword) relasz = 0;
+	ElfW(Xword) relaent = 0;
+
 	for (int idx=0; dyns[idx].d_un.d_val != DT_NULL; idx++)
 	{
 		const ElfW(Dyn)* dyn = &dyns[idx];
 
 		printf("%sElf_Dyn[%d]\n", indent, idx);
-		printf("%s\td_tag: '%s'\n", indent, dyn_tag2str(dyn->d_tag));
+		printf("%s\td_tag\t%ld (0x%p) '%s'\n",
+			indent, dyn->d_tag, (void*)dyn->d_tag, dyn_tag2str(dyn->d_tag));
 
 		switch (dyn->d_tag)
 		{
@@ -701,9 +729,40 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 				break;
 			}
 
+			case DT_RELA:
+			{
+				printf("%s\t%p\n", indent, (void*)dyn->d_un.d_ptr);
+
+				rela = (ElfW(Rela)*)dyn->d_un.d_ptr;
+
+				break;
+			}
+
+			case DT_RELASZ:
+			{
+				printf("%s\t%lu\n", indent, dyn->d_un.d_val);
+
+				relasz = dyn->d_un.d_val;
+
+				break;
+			}
+
+			case DT_RELAENT:
+			{
+				printf("%s\t%lu\n", indent, dyn->d_un.d_val);
+
+				relaent = dyn->d_un.d_val;
+
+				const int nrelas = relasz / relaent;
+
+				print_relas("\t\t\t\t\t", rela, nrelas, symtab, strtab);
+
+				break;
+			}
+
 			default:
 			{
-				printf("%sd_tag=%ld (%p)\n", indent1, dyn->d_tag, (void*)dyn->d_tag);
+				printf("%sd_un.d_val=%lu (%p)\n", indent1, dyn->d_un.d_val, (void*)dyn->d_un.d_ptr);
 				break;
 			}
 		}
