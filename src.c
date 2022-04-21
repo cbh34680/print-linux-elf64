@@ -242,6 +242,8 @@ static void print_syms(const char* indent, const ElfW(Sym)* syms, const int star
 	}
 }
 
+static void print_strtab(const char* indent, const char* pos);
+
 #ifdef TFILE
 static void print_shdrs(const ElfW(Ehdr)* ehdr, const ElfW(Shdr)* shdrs, const ElfW(Half) shnum, const byte_t* filebin)
 {
@@ -266,11 +268,26 @@ static void print_shdrs(const ElfW(Ehdr)* ehdr, const ElfW(Shdr)* shdrs, const E
 		printf("\t\tsh_type\t%u (0x%x)\t'%s'\n",
 			shdr->sh_type, shdr->sh_type, shdr_type2str(shdr->sh_type));
 
-		printf("\t\tsh_flags\t0x%lx\n", shdr->sh_flags);
-		if (shdr->sh_flags & SHF_INFO_LINK)
+		printf("\t\tsh_flags\t0x%02lx", shdr->sh_flags);
+
+		if (shdr->sh_flags)
 		{
-			puts("\t\t\tSHF_INFO_LINK");
+			printf(" (%c%c%c%c%c%c%c%c%c%c%c)",
+				shdr->sh_flags & SHF_WRITE            ? 'W' : '_',
+				shdr->sh_flags & SHF_ALLOC            ? 'A' : '_',
+				shdr->sh_flags & SHF_EXECINSTR        ? 'E' : '_',
+				shdr->sh_flags & SHF_MERGE            ? 'M' : '_',
+				shdr->sh_flags & SHF_STRINGS          ? 'S' : '_',
+				shdr->sh_flags & SHF_INFO_LINK        ? 'I' : '_',
+				shdr->sh_flags & SHF_LINK_ORDER       ? 'L' : '_',
+				shdr->sh_flags & SHF_OS_NONCONFORMING ? 'O' : '_',
+				shdr->sh_flags & SHF_GROUP            ? 'G' : '_',
+				shdr->sh_flags & SHF_TLS              ? 'T' : '_',
+				shdr->sh_flags & SHF_MASKOS           ? 'm' : '_');
 		}
+
+		puts("");
+
 		printf("\t\tsh_addr\t%lu (%p)\n", shdr->sh_addr, (void*)shdr->sh_addr);
 		printf("\t\tsh_offset\t%lu (%p)\n", shdr->sh_offset, (void*)shdr->sh_offset);
 		printf("\t\tsh_size\t%lu (0x%lx)\n", shdr->sh_size, shdr->sh_size);
@@ -349,6 +366,12 @@ static void print_shdrs(const ElfW(Ehdr)* ehdr, const ElfW(Shdr)* shdrs, const E
 			case SHT_NOTE:
 			{
 				print_note("\t\t\t", filepos, shdr->sh_size);
+				break;
+			}
+
+			case SHT_STRTAB:
+			{
+				print_strtab("\t\t\t", filepos);
 				break;
 			}
 
