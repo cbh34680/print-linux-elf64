@@ -11,7 +11,7 @@ clear; gcc -E src.c > src.pc; gcc -Wformat -Wformat-signedness -ggdb -O0 -c src.
 #define _GNU_SOURCE
 
 //#define TFILE
-#define ONLY_NONAME
+//#define ONLY_NONAME
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,6 +22,8 @@ clear; gcc -E src.c > src.pc; gcc -Wformat -Wformat-signedness -ggdb -O0 -c src.
 #include <alloca.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+
+#include <dirent.h>
 
 #ifdef TFILE
 	#include <sys/mman.h>
@@ -386,6 +388,24 @@ static void print_shdrs(const ElfW(Ehdr)* ehdr, const ElfW(Shdr)* shdrs, const E
 }
 #endif
 
+static const ElfW(Rela)* lookup_rela_by_name(const char* lookup_name, const ElfW(Rela)* relas, const int nrelas, const ElfW(Sym)* symtab, const char* strtab)
+{
+	for (int i=0; i<nrelas; i++)
+	{
+		const ElfW(Rela)* rela = (ElfW(Rela)*)&relas[i];
+
+		const int r_info_sym = ELF64_R_SYM(rela->r_info);
+		const char* symname = &strtab[symtab[r_info_sym].st_name];
+
+		if (strcmp(lookup_name, symname) == 0)
+		{
+			return rela;
+		}
+	}
+
+	return NULL;
+}
+
 static void print_relas(const char* indent, const ElfW(Rela)* relas, const int nrelas, const ElfW(Sym)* symtab, const char* strtab)
 {
 	char* indent1 = alloca(strlen(indent) + 2);
@@ -400,12 +420,13 @@ static void print_relas(const char* indent, const ElfW(Rela)* relas, const int n
 		const int r_info_sym = ELF64_R_SYM(rela->r_info);
 
 		printf("%sr_offset\t%p\n", indent1, (void*)rela->r_offset);
-		printf("%sr_info(sym)\t%d\n", indent1, r_info_sym);
+		printf("%sr_info(sym)\t%d", indent1, r_info_sym);
 
 		if (symtab && strtab)
 		{
-			printf("%s\t\t'%s'\n", indent1, &strtab[symtab[r_info_sym].st_name]);
+			printf("\t'%s'", &strtab[symtab[r_info_sym].st_name]);
 		}
+		printf("\n");
 
 		printf("%sr_info(type)\t%lu\n", indent1, ELF64_R_TYPE(rela->r_info));
 		printf("%sr_addend\t%ld\n", indent1, rela->r_addend);
@@ -443,6 +464,7 @@ static void print_strtab(const char* indent, const char* pos)
 static const char* dyn_tag2str(const ElfW(Xword) tag);
 static Elf_Symndx lookup_sym_gnu(const char* indent, const uint32_t* hash32, const char* key);
 static uint32_t new_hash_elf(const char* name);
+static const ElfW(Rela)* lookup_rela_by_name(const char* lookup_name, const ElfW(Rela)* relas, const int nrelas, const ElfW(Sym)* symtab, const char* strtab);
 
 #ifdef TFILE
 	#define D_UN_VAL(ba, v) (v.d_val)
@@ -487,26 +509,31 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 	ElfW(Addr) hashtab_gnu = 0;
 	ElfW(Addr) hashtab_elf = 0;
 
-	const ElfW(Rela)* rela = NULL;
+	const ElfW(Rela)* relas = NULL;
 	ElfW(Xword) relasz = 0;
-	ElfW(Xword) relaent = 0;
+
+	const ElfW(Rela)* pltrelas = NULL;
+	ElfW(Xword) pltrelsz = 0;
+
+	ElfW(Addr) pltgot = 0;
 
 	for (int idx=0; dyns[idx].d_un.d_val != DT_NULL; idx++)
 	{
 		const ElfW(Dyn)* dyn = &dyns[idx];
 
 		printf("%sElf_Dyn[%d]\n", indent, idx);
-		printf("%s\td_tag\t%ld (0x%p) '%s'\n",
+		printf("%s\td_tag\t%ld (%p) '%s'\n",
 			indent, dyn->d_tag, (void*)dyn->d_tag, dyn_tag2str(dyn->d_tag));
 
 		switch (dyn->d_tag)
 		{
+			case DT_SONAME:
 			case DT_NEEDED:
 			{
-				printf("%s\t%lu", indent, dyn->d_un.d_val);
+				printf("%s\t%lu (%p)", indent, dyn->d_un.d_val, (void*)dyn->d_un.d_ptr);
 				if (strtab)
 				{
-					printf(" '%s'", &strtab[dyn->d_un.d_val]);
+					printf("%s\t'%s'", indent, &strtab[dyn->d_un.d_val]);
 				}
 				printf("\n");
 
@@ -734,11 +761,12 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 				break;
 			}
 
+		// Rela -->
 			case DT_RELA:
 			{
 				printf("%s\t%p\n", indent, (void*)dyn->d_un.d_ptr);
 
-				rela = (ElfW(Rela)*)dyn->d_un.d_ptr;
+				relas = (ElfW(Rela)*)dyn->d_un.d_ptr;
 
 				break;
 			}
@@ -756,14 +784,87 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 			{
 				printf("%s\t%lu\n", indent, dyn->d_un.d_val);
 
-				relaent = dyn->d_un.d_val;
+				assert(relas);
+				assert(relasz);
+
+				const ElfW(Xword) relaent = dyn->d_un.d_val;
+				assert(relaent == sizeof(ElfW(Rela)));
 
 				const int nrelas = relasz / relaent;
 
-				print_relas("\t\t\t\t\t", rela, nrelas, symtab, strtab);
+				print_relas(indent2, relas, nrelas, symtab, strtab);
 
 				break;
 			}
+		// Rela <--
+
+		// Plt -->
+			case DT_PLTGOT:
+			{
+				printf("%sd_un.d_val=%lu (%p)\n", indent1, dyn->d_un.d_val, (void*)dyn->d_un.d_ptr);
+
+				pltgot = dyn->d_un.d_val;
+
+				break;
+			}
+
+			case DT_PLTRELSZ:
+			{
+				printf("%s%lu\n", indent1, dyn->d_un.d_val);
+				pltrelsz = dyn->d_un.d_val;
+
+				break;
+			}
+
+			case DT_PLTREL:
+			{
+				printf("%s%lu\n", indent1, dyn->d_un.d_val);
+				assert(dyn->d_un.d_val == DT_RELA);
+
+				break;
+			}
+
+			case DT_JMPREL:
+			{
+				// https://github.com/r0ngwe1/elfloader/blob/master/elf_loader.c
+
+				assert(pltrelsz);
+				const ElfW(Xword) npltrelas = pltrelsz / sizeof(ElfW(Rela));
+				pltrelas = (ElfW(Rela)*)dyn->d_un.d_val;
+
+				print_relas(indent2, pltrelas, npltrelas, symtab, strtab);
+
+				// GOT
+				assert(pltgot);
+
+				const char* lookup_name = "opendir";
+
+				printf("%s((got TEST S)) lookup('%s')\n", indent2,  lookup_name);
+
+				const ElfW(Rela)* rela = lookup_rela_by_name(lookup_name,
+											pltrelas, npltrelas, symtab, strtab);
+
+				if (rela)
+				{
+					printf("%s\tr_offset=%p\n", indent2, (void*)rela->r_offset);
+					const void* got = baseadr + rela->r_offset;
+					printf("%s\tgot=%p\n", indent2, got);
+
+					const ElfW(Addr) bef_addr = *(ElfW(Addr)*)got;
+					printf("%s\tbefore addr=%p\n", indent2, (void*)bef_addr);
+
+					opendir("/etc/");
+
+					const ElfW(Addr) aft_addr = *(ElfW(Addr)*)got;
+					printf("%s\tafter addr=%p\n", indent2, (void*)aft_addr);
+				}
+
+				printf("%s((got TEST E)) lookup('%s')\n", indent2,  lookup_name);
+
+				break;
+			}
+		// Plt <--
+
 
 			default:
 			{
@@ -839,6 +940,7 @@ static void print_phdrs(const ElfW(Phdr)* phdrs, const int nphdrs, const byte_t*
 	}
 }
 
+const char* note_type2str(const uint32_t type);
 static void print_note(const char* indent, const void* datapos, const ElfW(Xword) p_filesz)
 {
 	char* indent1 = alloca(strlen(indent) + 2);
@@ -874,8 +976,8 @@ static void print_note(const char* indent, const void* datapos, const ElfW(Xword
 
 			//const int skip = ((*namesz / 4) + (*namesz % 4 > 0 ? 1 : 0)) * 4;
 			//const int skip = ( ( ( *namesz + (ALIGN_SIZE - 1) ) >> 6 ) & 0177 ) * ALIGN_SIZE;
-			const int skip = *namesz + (ALIGN_SIZE - 1) & ~(ALIGN_SIZE - 1);
-			printf("%sn-skip\t%d\n", indent1, skip);
+			const int skip = (*namesz + (ALIGN_SIZE - 1)) & ~(ALIGN_SIZE - 1);
+			printf("%s* skip\t%d\n", indent1, skip);
 
 			name += skip;
 		}
@@ -884,14 +986,19 @@ static void print_note(const char* indent, const void* datapos, const ElfW(Xword
 
 		if (*descsz)
 		{
-			printf("%sdesc\t", indent1);
+			printf("%sdesc\t%s\n", indent1, note_type2str(*type));
 
 			switch (*type)
 			{
+				case NT_GNU_BUILD_ID:
+				{
+					print_memory(indent2, desc, *descsz, 0);
+
+					break;
+				}
+
 				case NT_GNU_ABI_TAG:
 				{
-					printf("NT_GNU_ABI_TAG\n");
-
 					const uint32_t* abi = (uint32_t*)desc;
 					printf("%s\t%u.%u.%u\n", indent2, abi[1], abi[2], abi[3]);
 
@@ -900,7 +1007,7 @@ static void print_note(const char* indent, const void* datapos, const ElfW(Xword
 
 				default:
 				{
-					print_memory("\t", desc, MIN(*descsz, 16), *descsz <= 16 ? 0 : 1);
+					print_memory(indent2, desc, MIN(*descsz, 16), *descsz <= 16 ? 0 : 1);
 
 					break;
 				}
@@ -908,8 +1015,8 @@ static void print_note(const char* indent, const void* datapos, const ElfW(Xword
 
 			//const int skip = ((*descsz / 4) + (*descsz % 4 > 0 ? 1 : 0)) * 4;
 			//const int skip = ( ( ( *descsz + (ALIGN_SIZE - 1) ) >> 6 ) & 0177 ) * ALIGN_SIZE;
-			const int skip = *descsz + (ALIGN_SIZE - 1) & ~(ALIGN_SIZE - 1);
-			printf("%sd-skip\t%d\n", indent1, skip);
+			const int skip = (*descsz + (ALIGN_SIZE - 1)) & ~(ALIGN_SIZE - 1);
+			printf("%s* skip\t%d\n", indent1, skip);
 
 			desc += skip;
 		}
@@ -921,6 +1028,8 @@ static void print_note(const char* indent, const void* datapos, const ElfW(Xword
 		j++;
 	}
 	while (next - datapos < p_filesz);
+
+	printf("%s* (%p - %p)%ld:%lu\n", indent, next, datapos, next - datapos, p_filesz);
 }
 
 #ifdef TMEM
@@ -1231,6 +1340,20 @@ static const char* dyn_tag2str(const ElfW(Xword) tag)
 		case DT_AUXILIARY: return "DT_AUXILIARY";
 		//case DT_FILTER: return "DT_FILTER";
 		//case DT_EXTRANUM: return "DT_EXTRANUM";
+	}
+
+	return "***";
+}
+
+const char* note_type2str(const uint32_t type)
+{
+	switch (type)
+	{
+		case NT_GNU_ABI_TAG:	return "NT_GNU_ABI_TAG";
+		case NT_GNU_HWCAP:	return "NT_GNU_HWCAP";
+		case NT_GNU_BUILD_ID:	return "NT_GNU_BUILD_ID";
+		case NT_GNU_GOLD_VERSION:	return "NT_GNU_GOLD_VERSION";
+		case NT_GNU_PROPERTY_TYPE_0:	return "NT_GNU_PROPERTY_TYPE_0";
 	}
 
 	return "***";
