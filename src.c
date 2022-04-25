@@ -851,6 +851,7 @@ static void print_note(const char* indent, const void* datapos, const ElfW(Xword
 
 	const void* next = datapos;
 	int j = 0;
+	const int ALIGN_SIZE = 4;
 
 	do
 	{
@@ -871,7 +872,9 @@ static void print_note(const char* indent, const void* datapos, const ElfW(Xword
 		{
 			printf("%sname\t'%s'\n", indent1, name);
 
-			const int skip = ((*namesz / 4) + (*namesz % 4 > 0 ? 1 : 0)) * 4;
+			//const int skip = ((*namesz / 4) + (*namesz % 4 > 0 ? 1 : 0)) * 4;
+			//const int skip = ( ( ( *namesz + (ALIGN_SIZE - 1) ) >> 6 ) & 0177 ) * ALIGN_SIZE;
+			const int skip = *namesz + (ALIGN_SIZE - 1) & ~(ALIGN_SIZE - 1);
 			printf("%sn-skip\t%d\n", indent1, skip);
 
 			name += skip;
@@ -903,7 +906,9 @@ static void print_note(const char* indent, const void* datapos, const ElfW(Xword
 				}
 			}
 
-			const int skip = ((*descsz / 4) + (*descsz % 4 > 0 ? 1 : 0)) * 4;
+			//const int skip = ((*descsz / 4) + (*descsz % 4 > 0 ? 1 : 0)) * 4;
+			//const int skip = ( ( ( *descsz + (ALIGN_SIZE - 1) ) >> 6 ) & 0177 ) * ALIGN_SIZE;
+			const int skip = *descsz + (ALIGN_SIZE - 1) & ~(ALIGN_SIZE - 1);
 			printf("%sd-skip\t%d\n", indent1, skip);
 
 			desc += skip;
