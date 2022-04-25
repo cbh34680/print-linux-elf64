@@ -11,7 +11,7 @@ clear; gcc -E src.c > src.pc; gcc -Wformat -Wformat-signedness -ggdb -O0 -c src.
 #define _GNU_SOURCE
 
 //#define TFILE
-//#define ONLY_NONAME
+#define ONLY_NONAME
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -388,22 +388,27 @@ static void print_shdrs(const ElfW(Ehdr)* ehdr, const ElfW(Shdr)* shdrs, const E
 
 static void print_relas(const char* indent, const ElfW(Rela)* relas, const int nrelas, const ElfW(Sym)* symtab, const char* strtab)
 {
+	char* indent1 = alloca(strlen(indent) + 2);
+	strcpy(indent1, indent);
+	strcat(indent1, &indent[strlen(indent) - 1]);
+
 	for (int i=0; i<nrelas; i++)
 	{
+		printf("%sRela[%d]\n", indent, i);
 		const ElfW(Rela)* rela = (ElfW(Rela)*)&relas[i];
 
 		const int r_info_sym = ELF64_R_SYM(rela->r_info);
 
-		printf("%sr_offset\t%p\n", indent, (void*)rela->r_offset);
-		printf("%sr_info(sym)\t%d\n", indent, r_info_sym);
+		printf("%sr_offset\t%p\n", indent1, (void*)rela->r_offset);
+		printf("%sr_info(sym)\t%d\n", indent1, r_info_sym);
 
 		if (symtab && strtab)
 		{
-			printf("%s\t\t'%s'\n", indent, &strtab[symtab[r_info_sym].st_name]);
+			printf("%s\t\t'%s'\n", indent1, &strtab[symtab[r_info_sym].st_name]);
 		}
 
-		printf("%sr_info(type)\t%lu\n", indent, ELF64_R_TYPE(rela->r_info));
-		printf("%sr_addend\t%ld\n", indent, rela->r_addend);
+		printf("%sr_info(type)\t%lu\n", indent1, ELF64_R_TYPE(rela->r_info));
+		printf("%sr_addend\t%ld\n", indent1, rela->r_addend);
 	}
 }
 
@@ -836,27 +841,38 @@ static void print_phdrs(const ElfW(Phdr)* phdrs, const int nphdrs, const byte_t*
 
 static void print_note(const char* indent, const void* datapos, const ElfW(Xword) p_filesz)
 {
+	char* indent1 = alloca(strlen(indent) + 2);
+	strcpy(indent1, indent);
+	strcat(indent1, &indent[strlen(indent) - 1]);
+
+	char* indent2 = alloca(strlen(indent1) + 2);
+	strcpy(indent2, indent1);
+	strcat(indent2, &indent1[strlen(indent1) - 1]);
+
 	const void* next = datapos;
+	int j = 0;
 
 	do
 	{
+		printf("%sNote[%d]\n", indent, j);
+
 		const uint32_t* namesz = next;
 		const uint32_t* descsz = namesz + 1;
 		const uint32_t* type = descsz + 1;
 
-		printf("%snamesz\t%u\n", indent, *namesz);
-		printf("%sdescsz\t%u\n", indent, *descsz);
+		printf("%snamesz\t%u\n", indent1, *namesz);
+		printf("%sdescsz\t%u\n", indent1, *descsz);
 
-		printf("%stype\t%u\n", indent, *type);
+		printf("%stype\t%u\n", indent1, *type);
 
 		const char* name = (char*)(type + 1);
 
 		if (*namesz)
 		{
-			printf("%sname\t'%s'\n", indent, name);
+			printf("%sname\t'%s'\n", indent1, name);
 
 			const int skip = ((*namesz / 4) + (*namesz % 4 > 0 ? 1 : 0)) * 4;
-			printf("%sn-skip\t%d\n", indent, skip);
+			printf("%sn-skip\t%d\n", indent1, skip);
 
 			name += skip;
 		}
@@ -865,11 +881,30 @@ static void print_note(const char* indent, const void* datapos, const ElfW(Xword
 
 		if (*descsz)
 		{
-			printf("%sdesc", indent);
-			print_memory("\t", desc, MIN(*descsz, 16), *descsz <= 16 ? 0 : 1);
+			printf("%sdesc\t", indent1);
+
+			switch (*type)
+			{
+				case NT_GNU_ABI_TAG:
+				{
+					printf("NT_GNU_ABI_TAG\n");
+
+					const uint32_t* abi = (uint32_t*)desc;
+					printf("%s\t%u.%u.%u\n", indent2, abi[1], abi[2], abi[3]);
+
+					break;
+				}
+
+				default:
+				{
+					print_memory("\t", desc, MIN(*descsz, 16), *descsz <= 16 ? 0 : 1);
+
+					break;
+				}
+			}
 
 			const int skip = ((*descsz / 4) + (*descsz % 4 > 0 ? 1 : 0)) * 4;
-			printf("%sd-skip\t%d\n", indent, skip);
+			printf("%sd-skip\t%d\n", indent1, skip);
 
 			desc += skip;
 		}
@@ -877,6 +912,8 @@ static void print_note(const char* indent, const void* datapos, const ElfW(Xword
 		next = desc;
 
 		//printf("\t\toffset\t%ld\n", next - (void*)datapos);
+
+		j++;
 	}
 	while (next - datapos < p_filesz);
 }
