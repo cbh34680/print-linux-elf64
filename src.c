@@ -178,6 +178,8 @@ int main(int argc, char** argv)
 
 #ifdef TMEM
 	const void* v_entry = (void*)at_entry;
+	printf("v_entry\n");
+	print_memory("\t", v_entry, 16, 1);
 #endif
 
 
@@ -268,7 +270,7 @@ static void print_shdrs(const ElfW(Ehdr)* ehdr, const ElfW(Shdr)* shdrs, const E
 		}
 		puts("");
 
-		printf("\t\tsh_type\t%u (0x%x)\t'%s'\n",
+		printf("\t\tsh_type\t%u (0x%x)\t%s\n",
 			shdr->sh_type, shdr->sh_type, shdr_type2str(shdr->sh_type));
 
 		printf("\t\tsh_flags\t0x%02lx", shdr->sh_flags);
@@ -406,30 +408,47 @@ static const ElfW(Rela)* lookup_rela_by_name(const char* lookup_name, const ElfW
 	return NULL;
 }
 
+static const char* r_info_type2str(const int type);
+
 static void print_relas(const char* indent, const ElfW(Rela)* relas, const int nrelas, const ElfW(Sym)* symtab, const char* strtab)
 {
+	assert(symtab && strtab);
+
 	char* indent1 = alloca(strlen(indent) + 2);
 	strcpy(indent1, indent);
 	strcat(indent1, &indent[strlen(indent) - 1]);
 
+	const char* pre_name_str = NULL;
+	int next_dot = 1;
+
 	for (int i=0; i<nrelas; i++)
 	{
-		printf("%sRela[%d]\n", indent, i);
 		const ElfW(Rela)* rela = (ElfW(Rela)*)&relas[i];
-
 		const int r_info_sym = ELF64_R_SYM(rela->r_info);
+		const int r_info_type = ELF64_R_TYPE(rela->r_info);
+		const char* st_name_str = &strtab[symtab[r_info_sym].st_name];
 
-		printf("%sr_offset\t%p\n", indent1, (void*)rela->r_offset);
-		printf("%sr_info(sym)\t%d", indent1, r_info_sym);
-
-		if (symtab && strtab)
+		if (pre_name_str && pre_name_str[0] == '\0' && st_name_str[0] == '\0' && i<(nrelas - 1))
 		{
-			printf("\t'%s'", &strtab[symtab[r_info_sym].st_name]);
-		}
-		printf("\n");
+			if (next_dot)
+			{
+				// skip
+				printf("%s...\n", indent);
+			}
 
-		printf("%sr_info(type)\t%lu\n", indent1, ELF64_R_TYPE(rela->r_info));
-		printf("%sr_addend\t%ld\n", indent1, rela->r_addend);
+			next_dot = 0;
+		}
+		else
+		{
+			printf("%sRela[%d]\n", indent, i);
+			printf("%sr_offset\t%p\n", indent1, (void*)rela->r_offset);
+			printf("%sr_info(sym)\t%d\t'%s'\n", indent1, r_info_sym, st_name_str);
+			printf("%sr_info(typ)\t%d\t%s\n", indent1, r_info_type, r_info_type2str(r_info_type));
+			printf("%sr_addend\t%ld\n", indent1, rela->r_addend);
+			next_dot = 1;
+		}
+
+		pre_name_str = st_name_str;
 	}
 }
 
@@ -465,6 +484,7 @@ static const char* dyn_tag2str(const ElfW(Xword) tag);
 static Elf_Symndx lookup_sym_gnu(const char* indent, const uint32_t* hash32, const char* key);
 static uint32_t new_hash_elf(const char* name);
 static const ElfW(Rela)* lookup_rela_by_name(const char* lookup_name, const ElfW(Rela)* relas, const int nrelas, const ElfW(Sym)* symtab, const char* strtab);
+const char* dt_flags_12str(const int val);
 
 #ifdef TFILE
 	#define D_UN_VAL(ba, v) (v.d_val)
@@ -522,7 +542,7 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 		const ElfW(Dyn)* dyn = &dyns[idx];
 
 		printf("%sElf_Dyn[%d]\n", indent, idx);
-		printf("%s\td_tag\t%ld (%p) '%s'\n",
+		printf("%s\td_tag\t%ld (%p)\t%s\n",
 			indent, dyn->d_tag, (void*)dyn->d_tag, dyn_tag2str(dyn->d_tag));
 
 		switch (dyn->d_tag)
@@ -561,7 +581,7 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 				printf("%s\t%p (%p)\n",
 					indent, (void*)dyn->d_un.d_ptr, (void*)D_UN_VAL(baseadr, dyn->d_un));
 
-				print_memory(indent1, (byte_t*)(baseadr + dyn->d_un.d_val), 16, 1);
+				print_memory(indent2, (byte_t*)(baseadr + dyn->d_un.d_val), 16, 1);
 
 				break;
 			}
@@ -571,7 +591,7 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 				printf("%s\t%p (%p)\n",
 					indent, (void*)dyn->d_un.d_ptr, (void*)D_UN_VAL(baseadr, dyn->d_un));
 
-				print_memory(indent1, baseadr + dyn->d_un.d_val, 16, 1);
+				print_memory(indent2, baseadr + dyn->d_un.d_val, 16, 1);
 
 				break;
 			}
@@ -617,7 +637,7 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 					for (int i=0; i<(dyn->d_un.d_val/sizeof(ElfW(Addr))); i++)
 					{
 						printf("%s\t[%d]=%p\n", indent, i, (void*)arr[i]);
-						print_memory(indent1, (byte_t*)arr[i], 16, 1);
+						print_memory(indent2, (byte_t*)arr[i], 16, 1);
 					}
 				}
 
@@ -635,7 +655,7 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 					for (int i=0; i<(dyn->d_un.d_val/sizeof(ElfW(Addr))); i++)
 					{
 						printf("%s\t[%d]=%p\n", indent, i, (void*)arr[i]);
-						print_memory(indent1, (byte_t*)arr[i], 16, 1);
+						print_memory(indent2, (byte_t*)arr[i], 16, 1);
 					}
 				}
 
@@ -654,7 +674,7 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 #endif
 
 				printf("%s\t%p\n", indent, (void*)hashtab_elf);
-				print_memory(indent1, (byte_t*)hashtab_elf, 16, 1);
+				print_memory(indent2, (byte_t*)hashtab_elf, 16, 1);
 
 				break;
 			}
@@ -671,7 +691,7 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 #endif
 
 				printf("%s\t%p\n", indent, (void*)hashtab_gnu);
-				print_memory(indent1, (byte_t*)hashtab_gnu, 16, 1);
+				print_memory(indent2, (byte_t*)hashtab_gnu, 16, 1);
 
 				break;
 			}
@@ -801,8 +821,7 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 		// Plt -->
 			case DT_PLTGOT:
 			{
-				printf("%sd_un.d_val=%lu (%p)\n", indent1, dyn->d_un.d_val, (void*)dyn->d_un.d_ptr);
-
+				printf("%s%p\n", indent1, (void*)dyn->d_un.d_val);
 				pltgot = dyn->d_un.d_val;
 
 				break;
@@ -865,6 +884,65 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 			}
 		// Plt <--
 
+		// Ver -->
+			// https://code.nsnam.org/mathieu/elf-loader/file/tip/vdl-reloc.c
+			case DT_VERDEF:
+			case DT_VERDEFNUM:
+			case DT_VERNEED:
+			case DT_VERNEEDNUM:
+			case DT_VERSYM:
+			{
+				printf("%sd_un.d_val=%lu (%p)\n", indent1, dyn->d_un.d_val, (void*)dyn->d_un.d_ptr);
+				break;
+			}
+		// Ver <--
+
+			case DT_FLAGS:
+			{
+				printf("%s", indent1);
+
+				switch (dyn->d_un.d_val)
+				{
+					case DF_ORIGIN:		printf("DF_ORIGIN"); break;
+					case DF_SYMBOLIC:	printf("DF_SYMBOLIC"); break;
+					case DF_TEXTREL:	printf("DF_TEXTREL"); break;
+					case DF_BIND_NOW:	printf("DF_BIND_NOW"); break;
+					case DF_STATIC_TLS:	printf("DF_STATIC_TLS"); break;
+					default:			printf("***"); break;
+				}
+
+				printf("\n");
+
+				break;
+			}
+
+			case DT_FLAGS_1:
+			{
+				printf("%s%s\n", indent1, dt_flags_12str(dyn->d_un.d_val));
+
+				switch (dyn->d_un.d_val)
+				{
+					case DF_1_PIE:
+					{
+						// https://code-examples.net/en/q/20eb9e1
+/*
+Executable generation        ELF type  DT_FLAGS_1  DF_1_PIE  chdmod +x      file 5.36
+---------------------------  --------  ----------  --------  -------------- --------------
+gcc -fpie -pie               ET_DYN    y           y         y              pie executable
+gcc -fno-pie -no-pie         ET_EXEC   n           n         y              executable
+gcc -shared                  ET_DYN    n           n         y              pie executable
+gcc -shared                  ET_DYN    n           n         n              shared object
+ld                           ET_EXEC   n           n         y              executable
+ld -pie --dynamic-linker     ET_DYN    y           y         y              pie executable
+ld -pie --no-dynamic-linker  ET_DYN    y           y         y              pie executable
+ */
+
+						break;
+					}
+				}
+
+				break;
+			}
 
 			default:
 			{
@@ -1054,7 +1132,7 @@ static int phdr_callback(struct dl_phdr_info *info, size_t size, void *data)
 
 static void print_phdr_members(const char* indent, const ElfW(Phdr)* phdr)
 {
-	printf("%sp_type\t0x%x\t'%s'\n", indent, phdr->p_type, phdr_type2str(phdr->p_type));
+	printf("%sp_type\t0x%x\t%s\n", indent, phdr->p_type, phdr_type2str(phdr->p_type));
 	printf("%sp_offset\t%lu (0x%lx)\n", indent, phdr->p_offset, phdr->p_offset);
 	printf("%sp_vaddr\t%lu (%p)\n", indent, phdr->p_vaddr, (void*)phdr->p_vaddr);
 	printf("%sp_paddr\t%lu (%p)\n", indent, phdr->p_paddr, (void*)phdr->p_paddr);
@@ -1345,6 +1423,46 @@ static const char* dyn_tag2str(const ElfW(Xword) tag)
 	return "***";
 }
 
+const char* dt_flags_12str(const int val)
+{
+	switch (val)
+	{
+		case DF_1_NOW: return "DF_1_NOW";
+		case DF_1_GLOBAL: return "DF_1_GLOBAL";
+		case DF_1_GROUP: return "DF_1_GROUP";
+		case DF_1_NODELETE: return "DF_1_NODELETE";
+		case DF_1_LOADFLTR: return "DF_1_LOADFLTR";
+		case DF_1_INITFIRST: return "DF_1_INITFIRST";
+		case DF_1_NOOPEN: return "DF_1_NOOPEN";
+		case DF_1_ORIGIN: return "DF_1_ORIGIN";
+		case DF_1_DIRECT: return "DF_1_DIRECT";
+		case DF_1_TRANS: return "DF_1_TRANS";
+		case DF_1_INTERPOSE: return "DF_1_INTERPOSE";
+		case DF_1_NODEFLIB: return "DF_1_NODEFLIB";
+		case DF_1_NODUMP: return "DF_1_NODUMP";
+		case DF_1_CONFALT: return "DF_1_CONFALT";
+		case DF_1_ENDFILTEE: return "DF_1_ENDFILTEE";
+		case DF_1_DISPRELDNE: return "DF_1_DISPRELDNE";
+		case DF_1_DISPRELPND: return "DF_1_DISPRELPND";
+		case DF_1_NODIRECT: return "DF_1_NODIRECT";
+		case DF_1_IGNMULDEF: return "DF_1_IGNMULDEF";
+		case DF_1_NOKSYMS: return "DF_1_NOKSYMS";
+		case DF_1_NOHDR: return "DF_1_NOHDR";
+		case DF_1_EDITED: return "DF_1_EDITED";
+		case DF_1_NORELOC: return "DF_1_NORELOC";
+		case DF_1_SYMINTPOSE: return "DF_1_SYMINTPOSE";
+		case DF_1_GLOBAUDIT: return "DF_1_GLOBAUDIT";
+		case DF_1_SINGLETON: return "DF_1_SINGLETON";
+		case DF_1_STUB: return "DF_1_STUB";
+		case DF_1_PIE: return "DF_1_PIE";
+		case DF_1_KMOD: return "DF_1_KMOD";
+		case DF_1_WEAKFILTER: return "DF_1_WEAKFILTER";
+		case DF_1_NOCOMMON: return "DF_1_NOCOMMON";
+	}
+
+	return "***";
+}
+
 const char* note_type2str(const uint32_t type)
 {
 	switch (type)
@@ -1354,6 +1472,59 @@ const char* note_type2str(const uint32_t type)
 		case NT_GNU_BUILD_ID:	return "NT_GNU_BUILD_ID";
 		case NT_GNU_GOLD_VERSION:	return "NT_GNU_GOLD_VERSION";
 		case NT_GNU_PROPERTY_TYPE_0:	return "NT_GNU_PROPERTY_TYPE_0";
+	}
+
+	return "***";
+}
+
+static const char* r_info_type2str(const int type)
+{
+	// https://sugawarayusuke.hatenablog.com/entry/2018/03/06/020921
+
+	switch (type)
+	{
+		case R_X86_64_NONE: return "R_X86_64_NONE";
+		case R_X86_64_64: return "R_X86_64_64";
+		case R_X86_64_PC32: return "R_X86_64_PC32";
+		case R_X86_64_GOT32: return "R_X86_64_GOT32";
+		case R_X86_64_PLT32: return "R_X86_64_PLT32";
+		case R_X86_64_COPY: return "R_X86_64_COPY";
+		case R_X86_64_GLOB_DAT: return "R_X86_64_GLOB_DAT";
+		case R_X86_64_JUMP_SLOT: return "R_X86_64_JUMP_SLOT";
+		case R_X86_64_RELATIVE: return "R_X86_64_RELATIVE";
+		case R_X86_64_GOTPCREL: return "R_X86_64_GOTPCREL";
+		case R_X86_64_32: return "R_X86_64_32";
+		case R_X86_64_32S: return "R_X86_64_32S";
+		case R_X86_64_16: return "R_X86_64_16";
+		case R_X86_64_PC16: return "R_X86_64_PC16";
+		case R_X86_64_8: return "R_X86_64_8";
+		case R_X86_64_PC8: return "R_X86_64_PC8";
+		case R_X86_64_DTPMOD64: return "R_X86_64_DTPMOD64";
+		case R_X86_64_DTPOFF64: return "R_X86_64_DTPOFF64";
+		case R_X86_64_TPOFF64: return "R_X86_64_TPOFF64";
+		case R_X86_64_TLSGD: return "R_X86_64_TLSGD";
+		case R_X86_64_TLSLD: return "R_X86_64_TLSLD";
+		case R_X86_64_DTPOFF32: return "R_X86_64_DTPOFF32";
+		case R_X86_64_GOTTPOFF: return "R_X86_64_GOTTPOFF";
+		case R_X86_64_TPOFF32: return "R_X86_64_TPOFF32";
+		case R_X86_64_PC64: return "R_X86_64_PC64";
+		case R_X86_64_GOTOFF64: return "R_X86_64_GOTOFF64";
+		case R_X86_64_GOTPC32: return "R_X86_64_GOTPC32";
+		case R_X86_64_GOT64: return "R_X86_64_GOT64";
+		case R_X86_64_GOTPCREL64: return "R_X86_64_GOTPCREL64";
+		case R_X86_64_GOTPC64: return "R_X86_64_GOTPC64";
+		case R_X86_64_GOTPLT64: return "R_X86_64_GOTPLT64";
+		case R_X86_64_PLTOFF64: return "R_X86_64_PLTOFF64";
+		case R_X86_64_SIZE32: return "R_X86_64_SIZE32";
+		case R_X86_64_SIZE64: return "R_X86_64_SIZE64";
+		case R_X86_64_GOTPC32_TLSDESC: return "R_X86_64_GOTPC32_TLSDESC";
+		case R_X86_64_TLSDESC_CALL: return "R_X86_64_TLSDESC_CALL";
+		case R_X86_64_TLSDESC: return "R_X86_64_TLSDESC";
+		case R_X86_64_IRELATIVE: return "R_X86_64_IRELATIVE";
+		case R_X86_64_RELATIVE64: return "R_X86_64_RELATIVE64";
+		case R_X86_64_GOTPCRELX: return "R_X86_64_GOTPCRELX";
+		case R_X86_64_REX_GOTPCRELX: return "R_X86_64_REX_GOTPCRELX";
+		case R_X86_64_NUM: return "R_X86_64_NUM";
 	}
 
 	return "***";

@@ -4,9 +4,10 @@ set pagination off
 set disable-randomization off
 
 tui enable
-#layout asm
+
+layout asm
 layout src
-layout reg
+layout split
 
 # https://stackoverflow.com/questions/38803783/how-to-automatically-refresh-gdb-in-tui-mode
 define hook-next
