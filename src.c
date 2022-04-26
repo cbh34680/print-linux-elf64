@@ -537,6 +537,9 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 
 	ElfW(Addr) pltgot = 0;
 
+	const ElfW(Verneed)* verneeds = NULL;
+	const ElfW(Verdef)* verdefs = NULL;
+
 	for (int idx=0; dyns[idx].d_un.d_val != DT_NULL; idx++)
 	{
 		const ElfW(Dyn)* dyn = &dyns[idx];
@@ -886,13 +889,123 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 
 		// Ver -->
 			// https://code.nsnam.org/mathieu/elf-loader/file/tip/vdl-reloc.c
+
 			case DT_VERDEF:
+			{
+				verdefs = (ElfW(Verdef)*)(baseadr + dyn->d_un.d_ptr);
+				printf("%s%p\n", indent1, verdefs);
+
+				break;
+			}
+
 			case DT_VERDEFNUM:
+			{
+				printf("%s%lu\n", indent1, dyn->d_un.d_val);
+				printf("%s* sizeof(Verdef)=%lu\n", indent1, sizeof(ElfW(Verdef)));
+				printf("%s* sizeof(Verdaux)=%lu\n", indent1, sizeof(ElfW(Verdaux)));
+
+				const ElfW(Verdef)* verdef = verdefs;
+
+				for (int i=0; i<dyn->d_un.d_val; i++)
+				{
+					printf("%sVerdef[%d]\n", indent1, i);
+
+					printf("%svd_version\t%d\n", indent2, verdef->vd_version);
+					printf("%svd_flags\t%d\n", indent2, verdef->vd_flags);
+					printf("%svd_ndx\t%d\n", indent2, verdef->vd_ndx);
+					printf("%svd_cnt\t%d\n", indent2, verdef->vd_cnt);
+					printf("%svd_aux\t%u\n", indent2, verdef->vd_aux);
+					printf("%svd_next\t%u\n", indent2, verdef->vd_next);
+
+					const byte_t* aux_pos = ((byte_t*)verdef) + verdef->vd_aux;
+					const ElfW(Verdaux)* verdauxs = (ElfW(Verdaux)*)aux_pos;
+					const ElfW(Verdaux)* verdaux = verdauxs;
+
+					for (int j=0; j<verdef->vd_cnt; j++)
+					{
+						printf("%sVerdaux[%d]\n", indent2, j);
+
+						const char* vda_name = &strtab[verdaux->vda_name];
+						printf("%s\tvda_name\t%u\t'%s'\n", indent2, verdaux->vda_name, vda_name);
+						printf("%s\tvda_next\t%u\n", indent2, verdaux->vda_next);
+
+						const byte_t* vda_next_pos = ((byte_t*)verdaux) + verdaux->vda_next;
+						verdaux = (ElfW(Verdaux)*)vda_next_pos;
+					}
+
+					const byte_t* vd_next_pos = ((byte_t*)verdef) + verdef->vd_next;
+					verdef = (ElfW(Verdef)*)vd_next_pos;
+				}
+
+				break;
+			}
+
 			case DT_VERNEED:
+			{
+				verneeds = (ElfW(Verneed)*)(baseadr + dyn->d_un.d_ptr);
+				printf("%s%p\n", indent1, verneeds);
+
+				break;
+			}
+
 			case DT_VERNEEDNUM:
+			{
+				printf("%s%lu\n", indent1, dyn->d_un.d_val);
+				printf("%s* sizeof(Verneed)=%lu\n", indent1, sizeof(ElfW(Verneed)));
+				printf("%s* sizeof(Vernaux)=%lu\n", indent1, sizeof(ElfW(Vernaux)));
+
+				const ElfW(Verneed)* verneed = verneeds;
+
+				for (int i=0; i<dyn->d_un.d_val; i++)
+				{
+					printf("%sVerneed[%d]\n", indent1, i);
+
+					printf("%svn_version\t%d\n", indent2, verneed->vn_version);
+					printf("%svn_cnt\t%d\n", indent2, verneed->vn_cnt);
+					printf("%svn_file\t%u\t'%s'\n",
+							indent2, verneed->vn_file, &strtab[verneed->vn_file]);
+					printf("%svn_aux\t%u\n", indent2, verneed->vn_aux);
+					printf("%svn_next\t%u\n", indent2, verneed->vn_next);
+
+					const byte_t* aux_pos = ((byte_t*)verneed) + verneed->vn_aux;
+
+					const ElfW(Vernaux)* vernauxs = (ElfW(Vernaux)*)aux_pos;
+					const ElfW(Vernaux)* vernaux = vernauxs;
+
+					for (int j=0; j<verneed->vn_cnt; j++)
+					{
+						printf("%sVernaux[%d]\n", indent2, j);
+
+						const char* vna_name = &strtab[vernaux->vna_name];
+
+						printf("%s\tvna_hash\t%u\n", indent2, vernaux->vna_hash);
+						printf("%s\tvna_name\t%u\t'%s'\n", indent2, vernaux->vna_name, vna_name);
+						printf("%s\tvna_flags\t%u\n", indent2, vernaux->vna_flags);
+						printf("%s\tvna_next\t%u\n", indent2, vernaux->vna_next);
+
+						printf("%s\t* vna_name hash=%u\n", indent2, new_hash_elf(vna_name));
+
+						const byte_t* vna_next_pos = ((byte_t*)vernaux) + vernaux->vna_next;
+						vernaux = (ElfW(Vernaux)*)vna_next_pos;
+					}
+
+					const byte_t* vn_next_pos = ((byte_t*)verneed) + verneed->vn_next;
+					verneed = (ElfW(Verneed)*)vn_next_pos;
+				}
+
+				break;
+			}
+
 			case DT_VERSYM:
 			{
 				printf("%sd_un.d_val=%lu (%p)\n", indent1, dyn->d_un.d_val, (void*)dyn->d_un.d_ptr);
+
+/*
+				const ElfW(Sym)* versym = (ElfW(Sym)*)dyn->d_un.d_ptr;
+
+				print_syms(indent1, versym, 0, 1, strtab);
+*/
+
 				break;
 			}
 		// Ver <--
