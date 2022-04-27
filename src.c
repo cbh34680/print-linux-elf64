@@ -11,6 +11,7 @@ clear; gcc -E src.c > src.pc; gcc -Wformat -Wformat-signedness -ggdb -O0 -c src.
 #define _GNU_SOURCE
 
 //#define TFILE
+//#define TMEM
 //#define ONLY_NONAME
 
 #include <stdio.h>
@@ -70,6 +71,8 @@ void export_func(void)
 
 int g_int = 123;
 
+static const char* auxv_type2str(uint64_t a_type);
+
 static void print_phdrs(const ElfW(Phdr)* phdrs, const int nphdrs, const byte_t* baseadr);
 static void print_phdr_members(const char* indent, const ElfW(Phdr)* elf_phdr);
 static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* baseadr);
@@ -84,13 +87,35 @@ static const char* shdr_type2str(const ElfW(Word) type);
 static void print_memory(const char* indent, const byte_t* bytes, const int nbytes, const int and_more);
 static const char* phdr_type2str(const ElfW(Word) type);
 
-int main(int argc, char** argv)
+int main(int argc, char** argv, char** envp)
 {
 	printf("pid\t%d\n", getpid());
 
 	extern const void* _start;
 	printf("_start\t%p\n", _start);
 	printf("main\t%p\n", main);
+
+	puts("env");
+
+	char** env = envp;
+	for (int i=0; *env; i++)
+	{
+		printf("\t[%d]\t%s\n", i, *env);
+
+		env++;
+	}
+
+	puts("auxv");
+
+	const ElfW(auxv_t)* auxv = (ElfW(auxv_t)*)(env + 1);
+
+	for (int i=0; auxv->a_type != AT_NULL; auxv++, i++)
+	{
+		printf("\t[%d]\t%lu\t%s\t%lu (%p)\n",
+			i, auxv->a_type, auxv_type2str(auxv->a_type),
+			auxv->a_un.a_val, (void*)auxv->a_un.a_val);
+	}
+
 
 #ifdef TFILE
 	puts("\n*** target is FILE ***\n");
@@ -1697,4 +1722,51 @@ static const char* r_info_type2str(const int type)
 
 	return "***6***";
 }
+
+// https://kmyk.github.io/blog/blog/2017/02/15/dump-auxiliary-vector/
+
+static const char* auxv_type2str(uint64_t a_type)
+{
+    switch (a_type)
+	{
+		case AT_NULL:           return "AT_NULL";
+		case AT_IGNORE:         return "AT_IGNORE";
+		case AT_EXECFD:         return "AT_EXECFD";
+		case AT_PHDR:           return "AT_PHDR";
+		case AT_PHENT:          return "AT_PHENT";
+		case AT_PHNUM:          return "AT_PHNUM";
+		case AT_PAGESZ:         return "AT_PAGESZ";
+		case AT_BASE:           return "AT_BASE";
+		case AT_FLAGS:          return "AT_FLAGS";
+		case AT_ENTRY:          return "AT_ENTRY";
+		case AT_NOTELF:         return "AT_NOTELF";
+		case AT_UID:            return "AT_UID";
+		case AT_EUID:           return "AT_EUID";
+		case AT_GID:            return "AT_GID";
+		case AT_EGID:           return "AT_EGID";
+		case AT_CLKTCK:         return "AT_CLKTCK";
+		case AT_PLATFORM:       return "AT_PLATFORM";
+		case AT_HWCAP:          return "AT_HWCAP";
+		case AT_FPUCW:          return "AT_FPUCW";
+		case AT_DCACHEBSIZE:    return "AT_DCACHEBSIZE";
+		case AT_ICACHEBSIZE:    return "AT_ICACHEBSIZE";
+		case AT_UCACHEBSIZE:    return "AT_UCACHEBSIZE";
+		case AT_IGNOREPPC:      return "AT_IGNOREPPC";
+		case AT_SECURE:         return "AT_SECURE";
+		case AT_BASE_PLATFORM:  return "AT_BASE_PLATFORM";
+		case AT_RANDOM:         return "AT_RANDOM";
+		case AT_HWCAP2:         return "AT_HWCAP2";
+		case AT_EXECFN:         return "AT_EXECFN";
+		case AT_SYSINFO:        return "AT_SYSINFO";
+		case AT_SYSINFO_EHDR:   return "AT_SYSINFO_EHDR";
+		case AT_L1I_CACHESHAPE: return "AT_L1I_CACHESHAPE";
+		case AT_L1D_CACHESHAPE: return "AT_L1D_CACHESHAPE";
+		case AT_L2_CACHESHAPE:  return "AT_L2_CACHESHAPE";
+		case AT_L3_CACHESHAPE:  return "AT_L3_CACHESHAPE";
+    }
+
+	return "***7***";
+}
+
+// EOF
 
