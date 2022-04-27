@@ -193,6 +193,9 @@ int main(int argc, char** argv)
 
 static void print_syms(const char* indent, const ElfW(Sym)* syms, const int start, const int nsyms, const char* strtab)
 {
+	assert(syms);
+	assert(strtab);
+
 	for (int i=0; i<nsyms; i++)
 	{
 		const ElfW(Sym)* sym = &syms[start + i];
@@ -482,6 +485,7 @@ static void print_strtab(const char* indent, const char* pos)
 
 static const char* dyn_tag2str(const ElfW(Xword) tag);
 static Elf_Symndx lookup_sym_gnu(const char* indent, const uint32_t* hash32, const char* key);
+static Elf_Symndx lookup_sym_elf(const char* indent, const uint32_t* hashtab, const char* key, const ElfW(Sym)* symtab, const char* strtab);
 static uint32_t new_hash_elf(const char* name);
 static const ElfW(Rela)* lookup_rela_by_name(const char* lookup_name, const ElfW(Rela)* relas, const int nrelas, const ElfW(Sym)* symtab, const char* strtab);
 const char* dt_flags_12str(const int val);
@@ -709,70 +713,10 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 
 				printf("%s\t%p\n", indent, (void*)symtab);
 
-				if (!strtab)
-					break;
-
 				print_syms(indent1, symtab, 0, 3, strtab);
 				printf("%s...\n", indent1);
 				printf("%s...\n", indent1);
 
-				const char* lookup_name = "realloc";
-
-				if (hashtab_gnu)
-				{
-					printf("%s((gnu TEST S)) lookup('%s')\n", indent1, lookup_name);
-
-					const Elf_Symndx symidx = lookup_sym_gnu(
-						indent2, (uint32_t*)hashtab_gnu, lookup_name);
-
-					printf("%s((gnu RESULT)) =>%u\n", indent1, symidx);
-					if (symidx)
-					{
-						print_syms(indent2, symtab, symidx, 1, strtab);
-					}
-
-					printf("%s((gnu TEST E)) lookup('%s')\n", indent1, lookup_name);
-				}
-
-				if (hashtab_elf)
-				{
-					//
-					// https://docs.oracle.com/cd/E26924_01/html/E25909/chapter6-48031.html#scrolltoc
-					// https://flapenguin.me/elf-dt-hash
-					//
-					printf("%s((elf TEST S)) lookup('%s')\n", indent1, lookup_name);
-
-					const uint32_t hash = new_hash_elf(lookup_name);
-					printf("%shash=%u (%x)\n", indent2, hash, hash);
-
-					const uint32_t* hashtab = (uint32_t*)hashtab_elf;
-					const uint32_t nbucket = hashtab[0];
-					const uint32_t nchain = hashtab[1];
-					const uint32_t* bucket = &hashtab[2];
-					const uint32_t* chain = &bucket[nbucket];
-
-					printf("%snbuckets=%u\n", indent2, nbucket);
-					printf("%snchain=%u\n", indent2, nchain);
-
-					Elf_Symndx symidx = SHN_UNDEF;
-
-					for (uint32_t i = bucket[hash % nbucket]; i; i = chain[i])
-					{
-						if (strcmp(lookup_name, strtab + symtab[i].st_name) == 0)
-						{
-							symidx = i;
-							break;
-						}
-					}
-
-					printf("%s((elf RESULT)) =>%u\n", indent1, symidx);
-					if (symidx)
-					{
-						print_syms(indent2, symtab, symidx, 1, strtab);
-					}
-
-					printf("%s((elf TEST E)) lookup('%s')\n", indent1, lookup_name);
-				}
 
 				break;
 			}
@@ -933,9 +877,13 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 						verdaux = (ElfW(Verdaux)*)vda_next_pos;
 					}
 
+					assert(! verdaux->vda_next);
+
 					const byte_t* vd_next_pos = ((byte_t*)verdef) + verdef->vd_next;
 					verdef = (ElfW(Verdef)*)vd_next_pos;
 				}
+
+				assert(! verdef->vd_next);
 
 				break;
 			}
@@ -989,9 +937,13 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 						vernaux = (ElfW(Vernaux)*)vna_next_pos;
 					}
 
+					assert(! vernaux->vna_next);
+
 					const byte_t* vn_next_pos = ((byte_t*)verneed) + verneed->vn_next;
 					verneed = (ElfW(Verneed)*)vn_next_pos;
 				}
+
+				assert(! verneed->vn_next);
 
 				break;
 			}
@@ -1000,11 +952,88 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 			{
 				printf("%sd_un.d_val=%lu (%p)\n", indent1, dyn->d_un.d_val, (void*)dyn->d_un.d_ptr);
 
-/*
-				const ElfW(Sym)* versym = (ElfW(Sym)*)dyn->d_un.d_ptr;
+				const ElfW(Versym)* versym = (ElfW(Versym)*)dyn->d_un.d_ptr;
 
-				print_syms(indent1, versym, 0, 1, strtab);
-*/
+				const char* lookup_name = "realloc";
+
+				if (hashtab_gnu)
+				{
+					printf("%s((gnu TEST S)) lookup('%s')\n", indent1, lookup_name);
+
+					const Elf_Symndx symidx = lookup_sym_gnu(
+						indent2, (uint32_t*)hashtab_gnu, lookup_name);
+
+					printf("%s((gnu RESULT)) =>%u\n", indent1, symidx);
+					if (symidx && symtab)
+					{
+						print_syms(indent2, symtab, symidx, 1, strtab);
+					}
+
+					printf("%s((gnu TEST E)) lookup('%s')\n", indent1, lookup_name);
+				}
+
+				if (hashtab_elf && symtab)
+				{
+					//
+					// https://docs.oracle.com/cd/E26924_01/html/E25909/chapter6-48031.html#scrolltoc
+					// https://flapenguin.me/elf-dt-hash
+					//
+					printf("%s((elf TEST S)) lookup('%s')\n", indent1, lookup_name);
+
+					const Elf_Symndx symidx = lookup_sym_elf(
+						indent2, (uint32_t*)hashtab_elf, lookup_name, symtab, strtab);
+
+					printf("%s((elf RESULT)) =>%u\n", indent1, symidx);
+					if (symidx)
+					{
+						print_syms(indent2, symtab, symidx, 1, strtab);
+
+						if (verdefs)
+						{
+							// https://elixir.bootlin.com/linux/v4.8/source/Documentation/vDSO/parse_vdso.c#L156
+
+							const char* version = "GLIBC_2.2.5";
+							printf("%s((ver TEST S)) version('%s')\n", indent2, version);
+
+							ElfW(Versym) ver = versym[symidx];
+
+							ver &= 0x7fff;
+							const ElfW(Verdef)* def = verdefs;
+
+							while (1)
+							{
+								if ((def->vd_flags & VER_FLG_BASE) == 0 &&
+									(def->vd_ndx & 0x7fff) == ver)
+								{
+									break;
+								}
+
+								if (def->vd_next == 0)
+								{
+									break;
+								}
+
+								def = (ElfW(Verdef)*)((byte_t*)def + def->vd_next);
+							}
+
+							printf("%s((ver RESULT)) =>%u\n", indent2, def->vd_next);
+
+							if (def->vd_next)
+							{
+								const ElfW(Verdaux)* aux = (ElfW(Verdaux)*)((byte_t*)def + def->vd_aux);
+								const uint32_t ver_hash = new_hash_elf(version);
+
+								printf("%s\t* ver_hash=%u\n", indent2, ver_hash);
+								printf("%s\t* vd_hash=%u\n", indent2, def->vd_hash);
+								printf("%s\t* vda_name=%u\t'%s'\n", indent2, aux->vda_name, &strtab[aux->vda_name]);
+							}
+
+							printf("%s((ver TEST S)) version('%s')\n", indent2, version);
+						}
+					}
+
+					printf("%s((elf TEST E)) lookup('%s')\n", indent1, lookup_name);
+				}
 
 				break;
 			}
@@ -1177,7 +1206,7 @@ static void print_note(const char* indent, const void* datapos, const ElfW(Xword
 
 		if (*descsz)
 		{
-			printf("%sdesc\t%s\n", indent1, note_type2str(*type));
+			printf("%sdesc\t%u\t%s\n", indent1, *type, note_type2str(*type));
 
 			switch (*type)
 			{
@@ -1389,6 +1418,32 @@ static Elf_Symndx lookup_sym_gnu(const char* indent, const uint32_t* hash32, con
 	return SHN_UNDEF;
 }
 
+static Elf_Symndx lookup_sym_elf(const char* indent, const uint32_t* hashtab, const char* key, const ElfW(Sym)* symtab, const char* strtab)
+{
+	// https://elixir.bootlin.com/linux/v4.8/source/Documentation/vDSO/parse_vdso.c#L156
+
+	const uint32_t hash = new_hash_elf(key);
+	printf("%shash=%u (%x)\n", indent, hash, hash);
+
+	const uint32_t nbuckets = hashtab[0];
+	const uint32_t nchains = hashtab[1];
+	const uint32_t* buckets = &hashtab[2];
+	const uint32_t* chains = &buckets[nbuckets];
+
+	printf("%snbuckets=%u\n", indent, nbuckets);
+	printf("%snchains=%u\n", indent, nchains);
+
+	for (uint32_t chain = buckets[hash % nbuckets]; chain != STN_UNDEF; chain = chains[chain])
+	{
+		if (strcmp(key, strtab + symtab[chain].st_name) == 0)
+		{
+			return chain;
+		}
+	}
+
+	return 0;
+}
+
 static const char* phdr_type2str(const ElfW(Word) type)
 {
 	switch (type)
@@ -1410,7 +1465,7 @@ static const char* phdr_type2str(const ElfW(Word) type)
 		case PT_GNU_RELRO:		return "PT_GNU_RELRO";
 	}
 
-	return "***";
+	return "***1***";
 }
 
 #ifdef TFILE
@@ -1445,7 +1500,7 @@ static const char* shdr_type2str(const ElfW(Word) type)
 		case SHT_GNU_verneed:	return "SHT_GNU_verneed";
 	}
 
-	return "***";
+	return "***2***";
 }
 #endif
 
@@ -1533,7 +1588,7 @@ static const char* dyn_tag2str(const ElfW(Xword) tag)
 		//case DT_EXTRANUM: return "DT_EXTRANUM";
 	}
 
-	return "***";
+	return "***3***";
 }
 
 const char* dt_flags_12str(const int val)
@@ -1573,7 +1628,7 @@ const char* dt_flags_12str(const int val)
 		case DF_1_NOCOMMON: return "DF_1_NOCOMMON";
 	}
 
-	return "***";
+	return "***4***";
 }
 
 const char* note_type2str(const uint32_t type)
@@ -1587,7 +1642,7 @@ const char* note_type2str(const uint32_t type)
 		case NT_GNU_PROPERTY_TYPE_0:	return "NT_GNU_PROPERTY_TYPE_0";
 	}
 
-	return "***";
+	return "***5***";
 }
 
 static const char* r_info_type2str(const int type)
@@ -1640,6 +1695,6 @@ static const char* r_info_type2str(const int type)
 		case R_X86_64_NUM: return "R_X86_64_NUM";
 	}
 
-	return "***";
+	return "***6***";
 }
 
