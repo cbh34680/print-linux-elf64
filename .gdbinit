@@ -2,6 +2,7 @@ set step-mode on
 set confirm off
 set pagination off
 set disable-randomization off
+set env LD_LIBRARY_PATH .
 
 tui enable
 

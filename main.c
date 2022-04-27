@@ -38,6 +38,10 @@ clear; gcc -E src.c > src.pc; gcc -Wformat -Wformat-signedness -ggdb -O0 -c src.
 #include <elf.h>
 #include <sys/auxv.h>
 
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
+extern void dll_main();
+
 typedef unsigned char byte_t;
 
 #ifdef TMEM
@@ -72,11 +76,13 @@ void export_func(void)
 int g_int = 123;
 
 static const char* auxv_type2str(uint64_t a_type);
+static uint32_t new_hash_elf(const char* name);
 
 static void print_phdrs(const ElfW(Phdr)* phdrs, const int nphdrs, const byte_t* baseadr);
 static void print_phdr_members(const char* indent, const ElfW(Phdr)* elf_phdr);
 static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* baseadr);
 static void print_syms(const char* indent, const ElfW(Sym)* syms, const int start, const int nsyms, const char* strtab);
+static void print_ver(const char* indent, const ElfW(Versym)* versym, const Elf_Symndx symidx, const ElfW(Verdef)* verdefs, const char* version, const char* strtab);
 static void print_note(const char* indent, const void* datapos, const ElfW(Xword) p_filesz);
 
 #ifdef TFILE
@@ -95,12 +101,14 @@ int main(int argc, char** argv, char** envp)
 	printf("_start\t%p\n", _start);
 	printf("main\t%p\n", main);
 
+	dll_main();
+
 	puts("env");
 
 	char** env = envp;
 	for (int i=0; *env; i++)
 	{
-		printf("\t[%d]\t%s\n", i, *env);
+		printf("\t[%d]\t%.60s%s\n", i, *env, (strlen(*env) > 60) ? "..." : "");
 
 		env++;
 	}
@@ -214,64 +222,6 @@ int main(int argc, char** argv, char** envp)
 #endif	
 
 	return 0;
-}
-
-static void print_syms(const char* indent, const ElfW(Sym)* syms, const int start, const int nsyms, const char* strtab)
-{
-	assert(syms);
-	assert(strtab);
-
-	for (int i=0; i<nsyms; i++)
-	{
-		const ElfW(Sym)* sym = &syms[start + i];
-
-		printf("%sElf_Sym[%d]\n", indent, i);
-		printf("%s\tst_name\t%u '%s'\n", indent, sym->st_name, &strtab[sym->st_name]);
-		printf("%s\tst_value\t%p\n", indent, (void*)sym->st_value);
-		printf("%s\tst_size\t%lu\n", indent, sym->st_size);
-
-		const unsigned char st_info_bind = ELF64_ST_BIND(sym->st_info);
-		switch (st_info_bind)
-		{
-			case STB_LOCAL:
-				printf("%s\tst_info(bind)\tSTB_LOCAL\n", indent);
-				break;
-			case STB_GLOBAL:
-				printf("%s\tst_info(bind)\tSTB_GLOBAL\n", indent);
-				break;
-			case STB_WEAK:
-				printf("%s\tst_info(bind)\tSTB_WEAK\n", indent);
-				break;
-			default:
-				printf("%s\tst_info(bind)\t%u\n", indent, st_info_bind);
-				break;
-		}
-		const unsigned char st_info_type = ELF64_ST_TYPE(sym->st_info);
-		switch (st_info_type)
-		{
-			case STT_NOTYPE:
-				printf("%s\tst_info(type)\tSTT_NOTYPE\n", indent);
-				break;
-			case STT_OBJECT:
-				printf("%s\tst_info(type)\tSTT_OBJECT\n", indent);
-				break;
-			case STT_FUNC:
-				printf("%s\tst_info(type)\tSTT_FUNC\n", indent);
-				break;
-			case STT_SECTION:
-				printf("%s\tst_info(type)\tSTT_SECTION\n", indent);
-				break;
-			case STT_FILE:
-				printf("%s\tst_info(type)\tSTT_FILE\n", indent);
-				break;
-			default:
-				printf("%s\tst_info(type)\t%u\n", indent, st_info_type);
-				break;
-		}
-
-		printf("%s\tst_other\t%d\n", indent, ELF64_ST_VISIBILITY(sym->st_other));
-		printf("%s\tst_shndx\t%u\n", indent, sym->st_shndx);
-	}
 }
 
 static void print_strtab(const char* indent, const char* pos);
@@ -418,6 +368,7 @@ static void print_shdrs(const ElfW(Ehdr)* ehdr, const ElfW(Shdr)* shdrs, const E
 }
 #endif
 
+
 static const ElfW(Rela)* lookup_rela_by_name(const char* lookup_name, const ElfW(Rela)* relas, const int nrelas, const ElfW(Sym)* symtab, const char* strtab)
 {
 	for (int i=0; i<nrelas; i++)
@@ -500,7 +451,7 @@ static void print_strtab(const char* indent, const char* pos)
 		pos = pos + strlen(pos) + 1;
 	}
 
-	if (i >= 20)
+	if (i > 20)
 	{
 		printf("%s\t\t...\n", indent);
 
@@ -511,7 +462,6 @@ static void print_strtab(const char* indent, const char* pos)
 static const char* dyn_tag2str(const ElfW(Xword) tag);
 static Elf_Symndx lookup_sym_gnu(const char* indent, const uint32_t* hash32, const char* key);
 static Elf_Symndx lookup_sym_elf(const char* indent, const uint32_t* hashtab, const char* key, const ElfW(Sym)* symtab, const char* strtab);
-static uint32_t new_hash_elf(const char* name);
 static const ElfW(Rela)* lookup_rela_by_name(const char* lookup_name, const ElfW(Rela)* relas, const int nrelas, const ElfW(Sym)* symtab, const char* strtab);
 const char* dt_flags_12str(const int val);
 
@@ -530,6 +480,10 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 	char* indent2 = alloca(strlen(indent1) + 2);
 	strcpy(indent2, indent1);
 	strcat(indent2, &indent1[strlen(indent1) - 1]);
+
+	char* indent3 = alloca(strlen(indent2) + 2);
+	strcpy(indent3, indent2);
+	strcat(indent3, &indent2[strlen(indent2) - 1]);
 
 	const char* strtab = NULL;
 
@@ -738,11 +692,6 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 
 				printf("%s\t%p\n", indent, (void*)symtab);
 
-				print_syms(indent1, symtab, 0, 3, strtab);
-				printf("%s...\n", indent1);
-				printf("%s...\n", indent1);
-
-
 				break;
 			}
 
@@ -830,7 +779,7 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 
 				const char* lookup_name = "opendir";
 
-				printf("%s((got TEST S)) lookup('%s')\n", indent2,  lookup_name);
+				printf("%s((got TEST S)) lookup('%s')\n", indent2, lookup_name);
 
 				const ElfW(Rela)* rela = lookup_rela_by_name(lookup_name,
 											pltrelas, npltrelas, symtab, strtab);
@@ -980,6 +929,7 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 				const ElfW(Versym)* versym = (ElfW(Versym)*)dyn->d_un.d_ptr;
 
 				const char* lookup_name = "realloc";
+				const char* version = "GLIBC_2.2.5";
 
 				if (hashtab_gnu)
 				{
@@ -992,6 +942,11 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 					if (symidx && symtab)
 					{
 						print_syms(indent2, symtab, symidx, 1, strtab);
+
+						if (verdefs)
+						{
+							print_ver(indent2, versym, symidx, verdefs, version, strtab);
+						}
 					}
 
 					printf("%s((gnu TEST E)) lookup('%s')\n", indent1, lookup_name);
@@ -1013,47 +968,17 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 					{
 						print_syms(indent2, symtab, symidx, 1, strtab);
 
+						const ElfW(Sym)* sym = &symtab[symidx];
+
+						if (sym->st_size)
+						{
+							print_memory(indent3, baseadr + sym->st_value,
+											MIN(16, sym->st_value), sym->st_value <= 16 ? 0 : 1);
+						}
+
 						if (verdefs)
 						{
-							// https://elixir.bootlin.com/linux/v4.8/source/Documentation/vDSO/parse_vdso.c#L156
-
-							const char* version = "GLIBC_2.2.5";
-							printf("%s((ver TEST S)) version('%s')\n", indent2, version);
-
-							ElfW(Versym) ver = versym[symidx];
-
-							ver &= 0x7fff;
-							const ElfW(Verdef)* def = verdefs;
-
-							while (1)
-							{
-								if ((def->vd_flags & VER_FLG_BASE) == 0 &&
-									(def->vd_ndx & 0x7fff) == ver)
-								{
-									break;
-								}
-
-								if (def->vd_next == 0)
-								{
-									break;
-								}
-
-								def = (ElfW(Verdef)*)((byte_t*)def + def->vd_next);
-							}
-
-							printf("%s((ver RESULT)) =>%u\n", indent2, def->vd_next);
-
-							if (def->vd_next)
-							{
-								const ElfW(Verdaux)* aux = (ElfW(Verdaux)*)((byte_t*)def + def->vd_aux);
-								const uint32_t ver_hash = new_hash_elf(version);
-
-								printf("%s\t* ver_hash=%u\n", indent2, ver_hash);
-								printf("%s\t* vd_hash=%u\n", indent2, def->vd_hash);
-								printf("%s\t* vda_name=%u\t'%s'\n", indent2, aux->vda_name, &strtab[aux->vda_name]);
-							}
-
-							printf("%s((ver TEST S)) version('%s')\n", indent2, version);
+							print_ver(indent2, versym, symidx, verdefs, version, strtab);
 						}
 					}
 
@@ -1120,7 +1045,111 @@ ld -pie --no-dynamic-linker  ET_DYN    y           y         y              pie 
 	}
 }
 
-#define MIN(a, b) ((a) < (b) ? (a) : (b))
+static void print_ver(const char* indent, const ElfW(Versym)* versym, const Elf_Symndx symidx, const ElfW(Verdef)* verdefs, const char* version, const char* strtab)
+{
+	// https://elixir.bootlin.com/linux/v4.8/source/Documentation/vDSO/parse_vdso.c#L156
+
+	printf("%s((ver TEST S)) version('%s')\n", indent, version);
+
+	ElfW(Versym) ver = versym[symidx];
+
+	ver &= 0x7fff;
+	const ElfW(Verdef)* def = verdefs;
+
+	while (1)
+	{
+		if ((def->vd_flags & VER_FLG_BASE) == 0 &&
+			(def->vd_ndx & 0x7fff) == ver)
+		{
+			break;
+		}
+
+		if (def->vd_next == 0)
+		{
+			break;
+		}
+
+		def = (ElfW(Verdef)*)((byte_t*)def + def->vd_next);
+	}
+
+	printf("%s((ver RESULT)) =>%u\n", indent, def->vd_next);
+
+	if (def->vd_next)
+	{
+		const ElfW(Verdaux)* aux = (ElfW(Verdaux)*)((byte_t*)def + def->vd_aux);
+		const uint32_t ver_hash = new_hash_elf(version);
+
+		printf("%s\t* ver_hash=%u\n", indent, ver_hash);
+		printf("%s\t* vd_hash=%u\n", indent, def->vd_hash);
+		printf("%s\t* vda_name=%u\t'%s'\n", indent, aux->vda_name, &strtab[aux->vda_name]);
+	}
+
+	printf("%s((ver TEST S)) version('%s')\n", indent, version);
+}
+
+static void print_syms(const char* indent, const ElfW(Sym)* syms, const int start, const int nsyms, const char* strtab)
+{
+	assert(syms);
+	assert(strtab);
+
+	const ElfW(Sym)* sym = syms + start;
+
+	for (int i=0; i<nsyms; i++)
+	{
+		//const ElfW(Sym)* sym = &syms[start + i];
+
+		printf("%sElf_Sym[%d]\n", indent, i);
+
+		printf("%s\tst_name\t%u '%s'\n", indent, sym->st_name, &strtab[sym->st_name]);
+		printf("%s\tst_value\t%p\n", indent, (void*)sym->st_value);
+		printf("%s\tst_size\t%lu\n", indent, sym->st_size);
+
+		const unsigned char st_info_bind = ELF64_ST_BIND(sym->st_info);
+		switch (st_info_bind)
+		{
+			case STB_LOCAL:
+				printf("%s\tst_info(bind)\tSTB_LOCAL\n", indent);
+				break;
+			case STB_GLOBAL:
+				printf("%s\tst_info(bind)\tSTB_GLOBAL\n", indent);
+				break;
+			case STB_WEAK:
+				printf("%s\tst_info(bind)\tSTB_WEAK\n", indent);
+				break;
+			default:
+				printf("%s\tst_info(bind)\t%u\n", indent, st_info_bind);
+				break;
+		}
+		const unsigned char st_info_type = ELF64_ST_TYPE(sym->st_info);
+		switch (st_info_type)
+		{
+			case STT_NOTYPE:
+				printf("%s\tst_info(type)\tSTT_NOTYPE\n", indent);
+				break;
+			case STT_OBJECT:
+				printf("%s\tst_info(type)\tSTT_OBJECT\n", indent);
+				break;
+			case STT_FUNC:
+				printf("%s\tst_info(type)\tSTT_FUNC\n", indent);
+				break;
+			case STT_SECTION:
+				printf("%s\tst_info(type)\tSTT_SECTION\n", indent);
+				break;
+			case STT_FILE:
+				printf("%s\tst_info(type)\tSTT_FILE\n", indent);
+				break;
+			default:
+				printf("%s\tst_info(type)\t%u\n", indent, st_info_type);
+				break;
+		}
+
+		printf("%s\tst_other\t%u\t%d\n", indent, sym->st_other, ELF64_ST_VISIBILITY(sym->st_other));
+		printf("%s\tst_shndx\t%u\n", indent, sym->st_shndx);
+
+		syms++;
+	}
+}
+
 
 static void print_phdrs(const ElfW(Phdr)* phdrs, const int nphdrs, const byte_t* baseadr)
 {
@@ -1169,7 +1198,7 @@ static void print_phdrs(const ElfW(Phdr)* phdrs, const int nphdrs, const byte_t*
 
 			case PT_LOAD:
 			{
-				print_memory("\t\t\t", datapos, MIN(16, phdr->p_memsz), 1);
+				print_memory("\t\t\t", datapos, MIN(16, phdr->p_memsz), phdr->p_memsz <= 16 ? 0 : 1);
 				break;
 			}
 
@@ -1287,7 +1316,7 @@ static int phdr_callback(struct dl_phdr_info *info, size_t size, void *data)
 #endif
 	}
 
-	printf("name='%s' (%d segments) base=%p\n",
+	printf("#\n# phdr_callback()\n#\n# * dlpi_name='%s'\n# * dlpi_phnum=%d\n# * dlpi_addr=%p\n#\n",
 		info->dlpi_name, info->dlpi_phnum, (void*)info->dlpi_addr);
 
 	print_phdrs(info->dlpi_phdr, info->dlpi_phnum, (byte_t*)info->dlpi_addr);
