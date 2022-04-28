@@ -829,14 +829,23 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 
 				for (int i=0; i<dyn->d_un.d_val; i++)
 				{
-					printf("%sVerdef[%d]\n", indent1, i);
+					const int prt = i < 5 || i == (dyn->d_un.d_val - 1);
 
-					printf("%svd_version\t%d\n", indent2, verdef->vd_version);
-					printf("%svd_flags\t%d\n", indent2, verdef->vd_flags);
-					printf("%svd_ndx\t%d\n", indent2, verdef->vd_ndx);
-					printf("%svd_cnt\t%d\n", indent2, verdef->vd_cnt);
-					printf("%svd_aux\t%u\n", indent2, verdef->vd_aux);
-					printf("%svd_next\t%u\n", indent2, verdef->vd_next);
+					if (prt)
+					{
+						printf("%sVerdef[%d]\n", indent1, i);
+						printf("%svd_version\t%d\n", indent2, verdef->vd_version);
+						printf("%svd_flags\t%d\n", indent2, verdef->vd_flags);
+						printf("%svd_ndx\t%d\n", indent2, verdef->vd_ndx);
+						printf("%svd_cnt\t%d\n", indent2, verdef->vd_cnt);
+						printf("%svd_aux\t%u\n", indent2, verdef->vd_aux);
+						printf("%svd_next\t%u\n", indent2, verdef->vd_next);
+					}
+
+					if (i == 5)
+					{
+						printf("%s...\n", indent2);
+					}
 
 					const byte_t* aux_pos = ((byte_t*)verdef) + verdef->vd_aux;
 					const ElfW(Verdaux)* verdauxs = (ElfW(Verdaux)*)aux_pos;
@@ -844,11 +853,14 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 
 					for (int j=0; j<verdef->vd_cnt; j++)
 					{
-						printf("%sVerdaux[%d]\n", indent2, j);
-
 						const char* vda_name = &strtab[verdaux->vda_name];
-						printf("%s\tvda_name\t%u\t'%s'\n", indent2, verdaux->vda_name, vda_name);
-						printf("%s\tvda_next\t%u\n", indent2, verdaux->vda_next);
+
+						if (prt)
+						{
+							printf("%sVerdaux[%d]\n", indent2, j);
+							printf("%s\tvda_name\t%u\t'%s'\n", indent2, verdaux->vda_name, vda_name);
+							printf("%s\tvda_next\t%u\n", indent2, verdaux->vda_next);
+						}
 
 						const byte_t* vda_next_pos = ((byte_t*)verdaux) + verdaux->vda_next;
 						verdaux = (ElfW(Verdaux)*)vda_next_pos;

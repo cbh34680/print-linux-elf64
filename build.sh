@@ -33,3 +33,4 @@ gcc ${gccopts} -o main.exe main.o -L. -ldll
 ulimit -c unlimited
 LD_LIBRARY_PATH=. ./main.exe
 
+exit 0
