@@ -68,13 +68,6 @@ __attribute__ ((destructor)) static void destruct2()
 	puts("destruct2");
 }
 
-void export_func(void)
-{
-	puts("export");
-}
-
-int g_int = 123;
-
 static const char* auxv_type2str(uint64_t a_type);
 static uint32_t new_hash_elf(const char* name);
 
@@ -82,7 +75,7 @@ static void print_phdrs(const ElfW(Phdr)* phdrs, const int nphdrs, const byte_t*
 static void print_phdr_members(const char* indent, const ElfW(Phdr)* elf_phdr);
 static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* baseadr);
 static void print_syms(const char* indent, const ElfW(Sym)* syms, const int start, const int nsyms, const char* strtab);
-static void print_ver(const char* indent, const ElfW(Versym)* versym, const Elf_Symndx symidx, const ElfW(Verdef)* verdefs, const char* version, const char* strtab);
+static void print_ver(const char* indent, const ElfW(Versym)* versym, const Elf_Symndx symidx, const ElfW(Verdef)* verdefs, const char* strtab);
 static void print_note(const char* indent, const void* datapos, const ElfW(Xword) p_filesz);
 
 #ifdef TFILE
@@ -93,6 +86,19 @@ static const char* shdr_type2str(const ElfW(Word) type);
 static void print_memory(const char* indent, const byte_t* bytes, const int nbytes, const int and_more);
 static const char* phdr_type2str(const ElfW(Word) type);
 
+static void print_strtab(const char* indent, const char* pos);
+static void print_relas(const char* indent, const ElfW(Rela)* relas, const int nrelas, const ElfW(Sym)* symtab, const char* strtab);
+static const char* r_info_type2str(const int type);
+static const char* dyn_tag2str(const ElfW(Xword) tag);
+static Elf_Symndx lookup_sym_gnu(const char* indent, const uint32_t* hash32, const char* key);
+static Elf_Symndx lookup_sym_elf(const char* indent, const uint32_t* hashtab, const char* key, const ElfW(Sym)* symtab, const char* strtab);
+static const ElfW(Rela)* lookup_rela_by_name(const char* lookup_name, const ElfW(Rela)* relas, const int nrelas, const ElfW(Sym)* symtab, const char* strtab);
+static const char* dt_flags_12str(const int val);
+static const char* note_type2str(const uint32_t type);
+
+//
+//
+//
 int main(int argc, char** argv, char** envp)
 {
 	printf("pid\t%d\n", getpid());
@@ -123,7 +129,6 @@ int main(int argc, char** argv, char** envp)
 			i, auxv->a_type, auxv_type2str(auxv->a_type),
 			auxv->a_un.a_val, (void*)auxv->a_un.a_val);
 	}
-
 
 #ifdef TFILE
 	puts("\n*** target is FILE ***\n");
@@ -223,9 +228,6 @@ int main(int argc, char** argv, char** envp)
 
 	return 0;
 }
-
-static void print_strtab(const char* indent, const char* pos);
-static void print_relas(const char* indent, const ElfW(Rela)* relas, const int nrelas, const ElfW(Sym)* symtab, const char* strtab);
 
 #ifdef TFILE
 static void print_shdrs(const ElfW(Ehdr)* ehdr, const ElfW(Shdr)* shdrs, const ElfW(Half) shnum, const byte_t* filebin)
@@ -368,7 +370,6 @@ static void print_shdrs(const ElfW(Ehdr)* ehdr, const ElfW(Shdr)* shdrs, const E
 }
 #endif
 
-
 static const ElfW(Rela)* lookup_rela_by_name(const char* lookup_name, const ElfW(Rela)* relas, const int nrelas, const ElfW(Sym)* symtab, const char* strtab)
 {
 	for (int i=0; i<nrelas; i++)
@@ -386,8 +387,6 @@ static const ElfW(Rela)* lookup_rela_by_name(const char* lookup_name, const ElfW
 
 	return NULL;
 }
-
-static const char* r_info_type2str(const int type);
 
 static void print_relas(const char* indent, const ElfW(Rela)* relas, const int nrelas, const ElfW(Sym)* symtab, const char* strtab)
 {
@@ -459,12 +458,6 @@ static void print_strtab(const char* indent, const char* pos)
 	}
 }
 
-static const char* dyn_tag2str(const ElfW(Xword) tag);
-static Elf_Symndx lookup_sym_gnu(const char* indent, const uint32_t* hash32, const char* key);
-static Elf_Symndx lookup_sym_elf(const char* indent, const uint32_t* hashtab, const char* key, const ElfW(Sym)* symtab, const char* strtab);
-static const ElfW(Rela)* lookup_rela_by_name(const char* lookup_name, const ElfW(Rela)* relas, const int nrelas, const ElfW(Sym)* symtab, const char* strtab);
-const char* dt_flags_12str(const int val);
-
 #ifdef TFILE
 	#define D_UN_VAL(ba, v) (v.d_val)
 #else
@@ -484,6 +477,10 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 	char* indent3 = alloca(strlen(indent2) + 2);
 	strcpy(indent3, indent2);
 	strcat(indent3, &indent2[strlen(indent2) - 1]);
+
+	char* indent4 = alloca(strlen(indent3) + 2);
+	strcpy(indent4, indent3);
+	strcat(indent4, &indent3[strlen(indent3) - 1]);
 
 	const char* strtab = NULL;
 
@@ -793,10 +790,16 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 					const ElfW(Addr) bef_addr = *(ElfW(Addr)*)got;
 					printf("%s\tbefore addr=%p\n", indent2, (void*)bef_addr);
 
-					opendir("/etc/");
+					print_memory(indent4, (byte_t*)bef_addr, 16, 1);
+
+					DIR* dirp = opendir("/etc/");
 
 					const ElfW(Addr) aft_addr = *(ElfW(Addr)*)got;
 					printf("%s\tafter addr=%p\n", indent2, (void*)aft_addr);
+
+					print_memory(indent4, (byte_t*)aft_addr, 16, 1);
+
+					closedir(dirp);
 				}
 
 				printf("%s((got TEST E)) lookup('%s')\n", indent2,  lookup_name);
@@ -928,8 +931,7 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 
 				const ElfW(Versym)* versym = (ElfW(Versym)*)dyn->d_un.d_ptr;
 
-				const char* lookup_name = "realloc";
-				const char* version = "GLIBC_2.2.5";
+				const char* lookup_name = "opendir";
 
 				if (hashtab_gnu)
 				{
@@ -943,9 +945,18 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 					{
 						print_syms(indent2, symtab, symidx, 1, strtab);
 
+						const ElfW(Sym)* sym = &symtab[symidx];
+
+						if (sym->st_size)
+						{
+							printf("%s\t* addr=%p\n", indent3, baseadr + sym->st_value);
+							print_memory(indent4, baseadr + sym->st_value,
+											MIN(16, sym->st_value), sym->st_value <= 16 ? 0 : 1);
+						}
+
 						if (verdefs)
 						{
-							print_ver(indent2, versym, symidx, verdefs, version, strtab);
+							print_ver(indent2, versym, symidx, verdefs, strtab);
 						}
 					}
 
@@ -972,13 +983,14 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 
 						if (sym->st_size)
 						{
-							print_memory(indent3, baseadr + sym->st_value,
+							printf("%s\t* addr=%p\n", indent3, baseadr + sym->st_value);
+							print_memory(indent4, baseadr + sym->st_value,
 											MIN(16, sym->st_value), sym->st_value <= 16 ? 0 : 1);
 						}
 
 						if (verdefs)
 						{
-							print_ver(indent2, versym, symidx, verdefs, version, strtab);
+							print_ver(indent2, versym, symidx, verdefs, strtab);
 						}
 					}
 
@@ -1045,11 +1057,11 @@ ld -pie --no-dynamic-linker  ET_DYN    y           y         y              pie 
 	}
 }
 
-static void print_ver(const char* indent, const ElfW(Versym)* versym, const Elf_Symndx symidx, const ElfW(Verdef)* verdefs, const char* version, const char* strtab)
+static void print_ver(const char* indent, const ElfW(Versym)* versym, const Elf_Symndx symidx, const ElfW(Verdef)* verdefs, const char* strtab)
 {
 	// https://elixir.bootlin.com/linux/v4.8/source/Documentation/vDSO/parse_vdso.c#L156
 
-	printf("%s((ver TEST S)) version('%s')\n", indent, version);
+	printf("%s((ver TEST S))\n", indent);
 
 	ElfW(Versym) ver = versym[symidx];
 
@@ -1077,14 +1089,14 @@ static void print_ver(const char* indent, const ElfW(Versym)* versym, const Elf_
 	if (def->vd_next)
 	{
 		const ElfW(Verdaux)* aux = (ElfW(Verdaux)*)((byte_t*)def + def->vd_aux);
-		const uint32_t ver_hash = new_hash_elf(version);
+		const char* vda_name = &strtab[aux->vda_name];
 
-		printf("%s\t* ver_hash=%u\n", indent, ver_hash);
 		printf("%s\t* vd_hash=%u\n", indent, def->vd_hash);
-		printf("%s\t* vda_name=%u\t'%s'\n", indent, aux->vda_name, &strtab[aux->vda_name]);
+		printf("%s\t* vda_name=%u\t'%s'\t%u\n",
+				indent, aux->vda_name, vda_name, new_hash_elf(vda_name));
 	}
 
-	printf("%s((ver TEST S)) version('%s')\n", indent, version);
+	printf("%s((ver TEST E))\n", indent);
 }
 
 static void print_syms(const char* indent, const ElfW(Sym)* syms, const int start, const int nsyms, const char* strtab)
@@ -1150,7 +1162,6 @@ static void print_syms(const char* indent, const ElfW(Sym)* syms, const int star
 	}
 }
 
-
 static void print_phdrs(const ElfW(Phdr)* phdrs, const int nphdrs, const byte_t* baseadr)
 {
 	for (int j = 0; j < nphdrs; j++)
@@ -1214,7 +1225,6 @@ static void print_phdrs(const ElfW(Phdr)* phdrs, const int nphdrs, const byte_t*
 	}
 }
 
-const char* note_type2str(const uint32_t type);
 static void print_note(const char* indent, const void* datapos, const ElfW(Xword) p_filesz)
 {
 	char* indent1 = alloca(strlen(indent) + 2);
@@ -1397,7 +1407,6 @@ static uint32_t new_hash_elf(const char* name)
 
 	return h;
 }
-
 
 static Elf_Symndx lookup_sym_gnu(const char* indent, const uint32_t* hash32, const char* key)
 {
@@ -1645,7 +1654,7 @@ static const char* dyn_tag2str(const ElfW(Xword) tag)
 	return "***3***";
 }
 
-const char* dt_flags_12str(const int val)
+static const char* dt_flags_12str(const int val)
 {
 	switch (val)
 	{
@@ -1685,7 +1694,7 @@ const char* dt_flags_12str(const int val)
 	return "***4***";
 }
 
-const char* note_type2str(const uint32_t type)
+static const char* note_type2str(const uint32_t type)
 {
 	switch (type)
 	{
