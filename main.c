@@ -40,6 +40,7 @@ clear; gcc -E src.c > src.pc; gcc -Wformat -Wformat-signedness -ggdb -O0 -c src.
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
+extern void* __libc_stack_end;
 extern void dll_main();
 
 typedef unsigned char byte_t;
@@ -101,7 +102,18 @@ static const char* note_type2str(const uint32_t type);
 //
 int main(int argc, char** argv, char** envp)
 {
+	int _nouse = 128;
+
 	printf("pid\t%d\n", getpid());
+
+	const long pagesize = sysconf(_SC_PAGESIZE);
+	uintptr_t stack_end = (((uintptr_t)__libc_stack_end + pagesize) & ~(pagesize - 1));
+	printf("pagesize=%ld stack-end=0x%lx\n", pagesize, stack_end);
+
+	const void* faddr = __builtin_frame_address(0);
+
+	printf("frame-address=%p(%u)\n", faddr, (uint)faddr);
+	printf("first-var=%p(%u)\n", &_nouse, (uint)&_nouse);
 
 	extern const void* _start;
 	printf("_start\t%p\n", _start);
@@ -1231,6 +1243,11 @@ static void print_phdrs(const ElfW(Phdr)* phdrs, const int nphdrs, const byte_t*
 
 				print_note("\t\t\t", datapos, phdr->p_filesz);
 
+				break;
+			}
+
+			case PT_GNU_STACK:
+			{
 				break;
 			}
 		}
