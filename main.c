@@ -43,6 +43,9 @@ clear; gcc -E src.c > src.pc; gcc -Wformat -Wformat-signedness -ggdb -O0 -c src.
 extern void* __libc_stack_end;
 extern void dll_main();
 
+// https://linuxjm.osdn.jp/html/LDP_man-pages/man3/end.3.html
+extern char etext, edata, end;
+
 typedef unsigned char byte_t;
 
 #ifdef TMEM
@@ -118,6 +121,12 @@ int main(int argc, char** argv, char** envp)
 	extern const void* _start;
 	printf("_start\t%p\n", _start);
 	printf("main\t%p\n", main);
+
+	// https://linuxjm.osdn.jp/html/LDP_man-pages/man3/end.3.html
+	printf("First address past:\n");
+	printf("    program text (etext)      %10p\n", &etext);
+	printf("    initialized data (edata)  %10p\n", &edata);
+	printf("    uninitialized data (end)  %10p\n", &end);
 
 	dll_main();
 

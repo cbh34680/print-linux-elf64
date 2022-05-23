@@ -3,6 +3,14 @@ set confirm off
 #set pagination off
 set disable-randomization off
 set env LD_LIBRARY_PATH .
+set env LD_AUDIT ./audit.so
+set output-radix 16
+
+set backtrace past-entry
+set backtrace past-main
+set verbose on
+
+directory ../elf
 
 tui enable
 
