@@ -4,8 +4,8 @@ cd $(dirname $(readlink -f "${BASH_SOURCE:-$0}"))
 
 set -ex
 
-ptype=${1:-TFILE}
-#ptype=${1:-TMEM}
+#ptype=${1:-TFILE}
+ptype=${1:-TMEM}
 
 gccopts=''
 gccopts="${gccopts} -ggdb -O0"

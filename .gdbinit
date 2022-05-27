@@ -3,7 +3,7 @@ set confirm off
 #set pagination off
 set disable-randomization off
 set env LD_LIBRARY_PATH .
-set env LD_AUDIT ./audit.so
+#set env LD_AUDIT ./audit.so
 set output-radix 16
 
 set backtrace past-entry
@@ -41,3 +41,4 @@ alias -a dsb = x/32b $sp
 alias -a dsx = x/32x $sp
 
 start
+

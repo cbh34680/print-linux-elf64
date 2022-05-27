@@ -40,8 +40,12 @@ clear; gcc -E src.c > src.pc; gcc -Wformat -Wformat-signedness -ggdb -O0 -c src.
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
+extern const void* _start;
 extern void* __libc_stack_end;
 extern void dll_main();
+
+//extern void* __bss_start;
+//extern void* __bss_end;
 
 // https://linuxjm.osdn.jp/html/LDP_man-pages/man3/end.3.html
 extern char etext, edata, end;
@@ -50,6 +54,7 @@ typedef unsigned char byte_t;
 
 #ifdef TMEM
 static int phdr_callback(struct dl_phdr_info *info, size_t size, void *data);
+static int phdr_foreach(int callback(struct dl_phdr_info *, size_t, void *));
 #endif
 
 __attribute__ ((constructor)) static void construct1()
@@ -111,16 +116,20 @@ int main(int argc, char** argv, char** envp)
 
 	const long pagesize = sysconf(_SC_PAGESIZE);
 	uintptr_t stack_end = (((uintptr_t)__libc_stack_end + pagesize) & ~(pagesize - 1));
-	printf("pagesize=%ld stack-end=0x%lx\n", pagesize, stack_end);
+	printf("__libc_stack_end=%p pagesize=%ld stack-end=0x%lx\n",
+		__libc_stack_end, pagesize, stack_end);
 
 	const void* faddr = __builtin_frame_address(0);
 
 	printf("frame-address=%p(%u)\n", faddr, (uint)faddr);
 	printf("first-var=%p(%u)\n", &_nouse, (uint)&_nouse);
 
-	extern const void* _start;
 	printf("_start\t%p\n", _start);
 	printf("main\t%p\n", main);
+	//printf("_ns_loaded\t%p\n", _rtld_global._dl_ns._ns_loaded);
+
+	//printf("__bss_start\t%p\n", __bss_start);
+	//printf("__bss_end\t%p\n", __bss_end);
 
 	// https://linuxjm.osdn.jp/html/LDP_man-pages/man3/end.3.html
 	printf("First address past:\n");
@@ -130,7 +139,7 @@ int main(int argc, char** argv, char** envp)
 
 	dll_main();
 
-	puts("env");
+	printf("env (%p)\n", envp);
 
 	char** env = envp;
 	for (int i=0; *env; i++)
@@ -140,13 +149,13 @@ int main(int argc, char** argv, char** envp)
 		env++;
 	}
 
-	puts("auxv");
-
 	const ElfW(auxv_t)* auxv = (ElfW(auxv_t)*)(env + 1);
+
+	printf("auxv (%p)\n", auxv);
 
 	for (int i=0; auxv->a_type != AT_NULL; auxv++, i++)
 	{
-		printf("\t[%d]\t%lu\t%s\t%lu (%p)\n",
+		printf("\t[%d]\t%lu\t%s\t%lu (%p) #\n",
 			i, auxv->a_type, auxv_type2str(auxv->a_type),
 			auxv->a_un.a_val, (void*)auxv->a_un.a_val);
 	}
@@ -230,7 +239,9 @@ int main(int argc, char** argv, char** envp)
 
 #else
 	puts("Elf_Phdr");
-	dl_iterate_phdr(phdr_callback, NULL);
+
+	//dl_iterate_phdr(phdr_callback, NULL);
+	phdr_foreach(phdr_callback);
 
 #endif
 
@@ -964,7 +975,8 @@ static void print_dyns(const char* indent, const ElfW(Dyn)* dyns, const byte_t* 
 
 				const ElfW(Versym)* versym = (ElfW(Versym)*)dyn->d_un.d_ptr;
 
-				const char* lookup_name = "opendir";
+				//const char* lookup_name = "opendir";
+				const char* lookup_name = "_rtld_global";
 
 				if (hashtab_gnu)
 				{
@@ -1369,6 +1381,69 @@ static int phdr_callback(struct dl_phdr_info *info, size_t size, void *data)
 
 	print_phdrs(info->dlpi_phdr, info->dlpi_phnum, (byte_t*)info->dlpi_addr);
 
+
+	return 0;
+}
+
+// include/link.h
+//
+// "struct link_map" だと l_prev 移行が隠されてしまう
+struct x_link_map
+{
+	ElfW(Addr) l_addr;
+	char *l_name;
+	ElfW(Dyn) *l_ld;
+	struct x_link_map *l_next, *l_prev;
+
+	struct x_link_map *l_real;
+	Lmid_t l_ns;
+	void *l_libname;
+
+	ElfW(Dyn) *l_info[DT_NUM + /*DT_THISPROCNUM*/0 + DT_VERSIONTAGNUM
+		+ DT_EXTRANUM + DT_VALNUM + DT_ADDRNUM];
+
+	const ElfW(Phdr) *l_phdr;
+	ElfW(Addr) l_entry;
+	ElfW(Half) l_phnum;
+	ElfW(Half) l_ldnum;
+
+	// ...
+};
+
+// sysdeps/generic/ldsodefs.h
+struct rtld_global
+{
+	struct link_namespaces
+	{
+		struct x_link_map *_ns_loaded;
+		unsigned int _ns_nloaded;
+
+		// ...
+	}
+	_dl_ns;
+};
+
+extern struct rtld_global _rtld_global;
+extern struct rtld_global _rtld_global_ro;
+
+// elf/dl-iteratephdr.c# dl_iterate_phdr()
+static int phdr_foreach(int callback(struct dl_phdr_info *, size_t, void *))
+{
+	struct dl_phdr_info info;
+
+	// 本当はロックとかいろいろ必要
+
+	for (const struct x_link_map* l = _rtld_global._dl_ns._ns_loaded; l != NULL; l = l->l_next)
+	{
+		info.dlpi_addr = l->l_real->l_addr;
+		info.dlpi_name = l->l_real->l_name;
+		info.dlpi_phdr = l->l_real->l_phdr;
+		info.dlpi_phnum = l->l_real->l_phnum;
+
+		callback(&info, 0, NULL);
+		int iii = 0;
+		iii++;
+	}
 
 	return 0;
 }
